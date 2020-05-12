@@ -1,0 +1,301 @@
+#+title: Charming CLIM tutorial part 1 – controlling the terminal
+#+author: Daniel 'jackdaniel' Kochmański
+
+When building a console backend for McCLIM there are three terminal
+capabilities that we need:
+
+- configuring the terminal (raw mode, no echo, querying properties)
+- drawing output (positioning cursor and writing with attributes)
+- reading events (keyboard, pointer and window status changes)
+
+* Configuring the terminal
+
+To know where the terminal is, we need to start the implementation
+from a console and save streams in separate variables, because
+typically SWANK rebinds them.
+
+#+BEGIN_SRC common-lisp
+(defvar *console-io* *terminal-io*)
+(swank:create-server)
+(loop (sleep most-positive-fixnum))
+#+END_SRC
+
+Most things may be implemented with ANSI escape sequences and various
+extensions to them. Unfortunately we can't turn off echo and line
+buffering from this level. We will use a minimal C program to do that,
+which we will call with FFI.
+
+#+BEGIN_SRC c
+  /* This small program is written based on a tutorial found under URL:
+     https://viewsourcecode.org/snaptoken/kilo/02.enteringRawMode.html */
+
+  #include <stdlib.h>
+  #include <termios.h>
+  #include <unistd.h>
+
+  struct termios *enable_raw() {
+    struct termios *orig_termios = malloc(sizeof(struct termios));
+    struct termios raw;
+    tcgetattr(STDIN_FILENO, orig_termios);
+    raw = *orig_termios;
+    raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    raw.c_oflag &= ~(OPOST);
+    raw.c_cflag |= (CS8);
+    raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    return orig_termios;
+  }
+
+  void disable_raw(struct termios *orig_termios) {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, orig_termios);
+    free(orig_termios);
+  }
+#+END_SRC
+
+And here's how we will use it. Loading the C file will be performed by
+ASDF, but you may always compile and load it manually. To allow
+interactive recompilation we'll use a function ~show-screen~ which
+will be called each second.
+
+#+BEGIN_SRC common-lisp
+  (defpackage #:eu.turtleware.charming-clim
+    (:use #:cl)
+    (:export #:start-display))
+  (in-package #:eu.turtleware.charming-clim)
+
+  ;; gcc raw-mode.c -shared -o raw-mode.so
+  ;; (cffi:load-foreign-library "/path/to/raw-mode.so")
+
+  (cffi:defcfun (enable-raw "enable_raw")
+      :pointer)
+  (cffi:defcfun (disable-raw "disable_raw")
+      :void
+    (handler :pointer))
+
+  (defvar *console-io* *terminal-io*)
+
+  (defmacro with-console (opts &body body)
+    (declare (ignore opts))
+    (let ((handler (gensym)))
+      `(let ((,handler (enable-raw)))
+         (unwind-protect (progn ,@body)
+           (disable-raw ,handler)))))
+
+  (declaim (notinline show-screen))
+  (defun show-screen ()
+    (format *console-io* "~acHello World!" #\esc)
+    (finish-output *console-io*))
+
+  (defun start-display ()
+    (swank:create-server)
+    (with-console ()
+      (loop (sleep 1)
+            (show-screen))))
+#+END_SRC
+
+Finally, to wrap things up, we need to define a loadable system. Let's
+name the C file "raw-mode.c", and the Lisp file "terminal.lisp". The
+directory will have a flat structure with the ASDF definition file
+~eu.turtleware.charming-clim.asd~.
+
+I don't like ASDF so I won't focus on details of how and why this
+works, it is enough to say that it will work on systems with a C
+compiler ~cc~ on appropriate platforms which accept appropriate flags.
+
+#+BEGIN_SRC lisp
+  (defpackage #:charming-clim-system
+    (:use #:asdf #:cl)
+    (:export #:cfile))
+  (in-package #:charming-clim-system)
+
+  (defclass cfile (c-source-file) ())
+
+  (defmethod output-files ((o compile-op) (c cfile))
+    (list (make-pathname :name (component-name c) :type "so")))
+
+  (defmethod perform ((o compile-op) (c cfile))
+    (let ((in  (first (input-files o c)))
+          (out (first (output-files o c))))
+      (uiop:run-program (format nil "cc -shared ~a -o ~a" in out))))
+
+  (defmethod perform ((o load-op) (c cfile))
+    (let ((in (first (input-files o c))))
+      (uiop:call-function "cffi:load-foreign-library" in)))
+
+  (defmethod operation-done-p ((o compile-op) (c cfile))
+    (let ((in  (first (input-files o c)))
+          (out (first (output-files o c))))
+      (and (probe-file in)
+           (probe-file out)
+           (> (file-write-date out) (file-write-date in)))))
+
+  (defsystem "eu.turtleware.charming-clim"
+    :defsystem-depends-on (#:cffi)
+    :depends-on (#:cffi #:swank)
+    :components ((:static-file "tutorial.org")
+                 (:cfile "raw-mode")
+                 (:file "terminal")))
+#+END_SRC
+
+Now it is enough to load a system "eu.turtleware.charming-clim" in a
+terminal (not in Emacs!), and call
+~(eu.turtleware.charming-clim:start-display)~ to see on a screen a
+string "Hello World!". Now connect to the swank server and let the
+hacking commence. When you want to get your console back, type
+~(quit)~ in the REPL (or call another operator which stops your lisp).
+
+* Escape sequences
+
+We will control the terminal by using escape sequences from the ANSI
+ECMA-48 standard with some useful extensions. To understand better how
+escape sequences work you may refer to the following:
+
+- wikipedia article :: https://en.wikipedia.org/wiki/ANSI_escape_code
+- control sequences :: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+- standard ecma-48  :: https://www.ecma-international.org/publications/standards/Ecma-048.htm
+
+Escape sequences are often chained and accept parameters. Numbers are
+encoded with characters with delimiters. Character case matters. Let's
+define three a few utilities.
+
+#+BEGIN_SRC common-lisp
+  (defun put (&rest args)
+    "Put raw string on a console"
+    (format *console-io* "~{~a~}" args)
+    (finish-output *console-io*))
+
+  (defun esc (&rest args)
+    "Escape sequence"
+    (apply #'put #\esc args))
+
+  (defun csi (&rest args)
+    "Control sequence introducer"
+    (apply #'esc #\[ args))
+
+  (defun sgr (&rest args)
+    "Select Graphic Rendition"
+    (apply #'csi (append args '("m"))))
+#+END_SRC
+
+Time to add a high level interface. These few functions illustrate how
+the terminal is controlled. I add more functions when I need them.
+
+#+BEGIN_SRC lisp
+  (defun reset-console ()
+    "Clears the screen, attributes, cursor position etc."
+    (esc "c"))
+
+  (defun clear-console (&optional (mode 2))
+    "Erase in display"
+    ;; Defined modes:
+    ;; 0 - clear from cursor to the end of the display
+    ;; 1 - clear from cursor to the start of the display
+    ;; 2 - clear entire display
+    (csi mode "J"))
+
+  (defun clear-line (&optional (mode 2))
+    "Erase in line."
+    ;; Defined modes:
+    ;; 0 - clear from cursor to the end of the line
+    ;; 1 - clear from cursor to the start of the line
+    ;; 2 - clear entire line
+    (csi mode "K"))
+
+  (defun set-foreground-color (r g b)
+    (sgr "38;2;" r ";" g ";" b))
+
+  (defun set-background-color (r g b)
+    (sgr "48;2;" r ";" g ";" b))
+
+  (defun save-cursor-position ()
+    (send-control (csi "s")))
+
+  (defun restore-cursor-position ()
+    (send-control (csi "u")))
+
+  (defun set-cursor-position (row col)
+    (cond ((and row col)
+           (send-control (csi row ";" col "H")))
+          ((not (null n))
+           (send-control (csi row ";H")))
+          ((not (null m))
+           (send-control (csi ";" col "H")))))
+
+  (defmacro with-cursor-position ((row col) &body body)
+    `(progn
+       (save-cursor-position)
+       (set-cursor-position ,row ,col)
+       (unwind-protect (progn ,@body)
+         (restore-cursor-position))))
+
+  (defun (setf cursor-visibility) (visiblep)
+    (if visiblep
+        (csi "?" 2 5 "h")
+        (csi "?" 2 5 "l")))
+#+END_SRC
+
+And finally some more fun function. Typing the following in REPL while
+the terminal is open gives the most satisfying result. This example
+shows an important property of the terminal: first character is
+addressed with a coordinate [1, 1].
+
+#+BEGIN_SRC lisp
+  (defparameter *row* 2)
+  (defparameter *col* 2)
+  (defparameter *dir* 1)
+  (reset-console)
+  (setf (cursor-visibility) nil)
+  (set-background-color #x00 #x22 #x22)
+  (set-foreground-color #xff #xa0 #xa0)
+
+  (declaim (notinline show-screen))
+  (defun show-screen ()
+    (clear-console)
+    (let ((str "Hello World!"))
+      (set-cursor-position *row* (incf *col* *dir*))
+      (cond ((>= (+ (1- *col*) (length str)) 80)
+             (setf *dir* -1))
+            ((<= *col* 2)
+             (setf *dir* +1)))
+
+      (with-cursor-position (*row*  1) (put "|"))
+      (with-cursor-position (*row* 81) (put "|"))
+      (put str)))
+#+END_SRC
+
+Putting aside ~show-screen~ fun we'll improve the loop in
+~start-display~ so it is possible to modify the configuration easily.
+
+#+BEGIN_SRC lisp
+  (defun show-screen ()
+    (set-cursor-position (1+ (random 24))
+                         (1+ (random 80)))
+    (if (zerop (random 2))
+        (put "+")
+        (put "-")))
+
+  (defparameter *conf*
+    (list :sleep 1/60
+          :cursorp nil
+          :foreground '(#xff #xa0 #xa0)
+          :background '(#x00 #x22 #x22)))
+
+  (defun start-display ()
+    (swank:create-server)
+    (with-console ()
+      (loop with conf
+            with seconds
+            do (unless (equalp conf *conf*)
+                 (setf conf (copy-list *conf*))
+                 (destructuring-bind (&key sleep cursorp foreground background)
+                     conf
+                   (setf seconds sleep)
+                   (reset-console)
+                   (setf (cursor-visibility) (getf conf :cursorp))
+                   (apply #'set-background-color background)
+                   (apply #'set-foreground-color foreground)
+                   (clear-console)))
+               (sleep seconds)
+               (show-screen))))
+#+END_SRC
+>>>>>>> 4167eed... asdf
