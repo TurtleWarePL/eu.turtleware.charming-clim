@@ -298,4 +298,3 @@ Putting aside ~show-screen~ fun we'll improve the loop in
                (sleep seconds)
                (show-screen))))
 #+END_SRC
->>>>>>> 4167eed... asdf
