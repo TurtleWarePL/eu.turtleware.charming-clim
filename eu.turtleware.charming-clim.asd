@@ -26,7 +26,7 @@
 
 (defsystem "eu.turtleware.charming-clim"
   :defsystem-depends-on (#:cffi)
-  :depends-on (#:cffi #:swank)
+  :depends-on (#:alexandria #:cffi #:swank)
   :components ((:static-file "tutorial.org")
                (:cfile "raw-mode")
                (:file "terminal")))
