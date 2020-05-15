@@ -606,3 +606,535 @@ parameter. This is to allow mapping the key ALT to META.
         (setf +alt-mod+ +meta-mod+)
         (setf +alt-mod+ +alt-mod*+)))
 #+END_SRC
+
+* Civilizing the interface
+
+We can do quite a lot already. Our previous demo, despite being pretty
+basic, proves that. We want to add some interactive behavior to the
+application, so we may assign actions to the key combinations. But
+first we'll reform our abstraction so there are no dangling global
+variables around.
+
+We also isolate the low-level terminal access in ~init-console~ and
+~close-console~ functions, so we can treat the handler as an opaque
+object. We retain the variable ~*console-io*~, but we bind it only in
+the console context. We also bind a variable ~*console*~.
+
+
+#+BEGIN_SRC lisp
+  (defun init-console ()
+    (prog1 (enable-raw)
+      (reset-console)))
+
+  (defun close-console (handler)
+    (reset-console)
+    (disable-raw handler))
+
+  (defvar *console*)
+  (defvar *console-io*)
+
+  (defclass console ()
+    ((ios :initarg :ios :accessor ios :documentation "I/O stream for the terminal.")
+     (fgc :initarg :fgc :accessor fgc :documentation "Foregorund color.")
+     (bgc :initarg :bgc :accessor bgc :documentation "Background color.")
+     (pos :initarg :pos :accessor pos :documentation "Cursor position.")
+     (cvp :initarg :cvp :accessor cvp :documentation "Cursor visibility.")
+     (fps :initarg :fps :accessor fps :documentation "Desired framerate.")
+     (app :initarg :app :accessor app :documentation "Application state.")
+     (hnd               :accessor hnd :documentation "Terminal handler."))
+    (:default-initargs
+     :ios (error "I/O stream must be specified.")
+     :fgc '(#xff #xa0 #xa0)
+     :bgc '(#x00 #x22 #x22)
+     :pos '(1 . 1)
+     :cvp nil
+     :fps 60
+     :app nil))
+
+  (defmethod initialize-instance :after ((instance console) &key ios fgc bgc cvp)
+    (setf (hnd instance) (init-console))
+    (apply #'set-foreground-color fgc)
+    (apply #'set-background-color bgc)
+    (setf (cursor-visibility) cvp))
+
+  (defmacro with-console ((&rest args
+                           &key ios fgc bgc cvp fps &allow-other-keys)
+                          &body body)
+    (declare (ignore fgc bgc cvp fps))
+    `(let* ((*console-io* ,ios)
+            (*console* (make-instance 'console ,@args)))
+       (unwind-protect (progn ,@body)
+         (close-console (hnd *console*)))))
+
+  (defun start-display ()
+    (swank:create-server)
+    (with-console (:ios *terminal-io*)
+      (clear-console)
+      (loop (sleep (/ (fps *console*)))
+            (show-screen))))
+#+END_SRC
+
+
+To add some interactive behavior we want to assign actions to keys.
+We'll define a predicate which decided whether the key is *that* key.
+
+#+BEGIN_SRC lisp
+(defun keyp (ch key &rest mods)
+  (if (null mods)
+      (eql ch key)
+      (and (typep ch 'gesture)
+           (eql (gesture-key ch) key)
+           (eql (gesture-mods ch)
+                (loop for m in mods
+                      summing (ecase m
+                                (:c1 +c1-mod+)
+                                (:m  +meta-mod+)
+                                (:c  +ctrl-mod+)
+                                (:a  +alt-mod*+)
+                                (:s  +shift-mod+)))))))
+#+END_SRC
+
+Now we will add three key combinations:
+
+- C-q :: exit the application
+- C-r :: clear the console (i.e to wipe glitches)
+- C-u :: call the user function
+
+#+BEGIN_SRC lisp
+  (defun show-screen ()
+    (loop for ch = (read-input)
+          until (null ch)
+          do (push ch (app *console*))
+             (cond ((keyp ch #\Q :c)
+                    (cl-user::quit))
+                   ((keyp ch #\R :c)
+                    (setf (app *console*) nil)
+                    (clear-console))
+                   ((keyp ch #\U :c)
+                    (ignore-errors (user-action)))))
+    (let ((ch (app *console*)))
+      (setf (app *console*)
+            (subseq ch 0 (min 12 (length ch)))))
+    (set-cursor-position (1+ (random 12))
+                         (1+ (random 40)))
+    (if (zerop (random 2))
+        (put "+")
+        (put "-"))
+    (with-cursor-position (1 44)
+      (loop for row from 1
+            for ch in (app *console*)
+            do (set-cursor-position row 44)
+               (format *console-io* (format nil "Read: ~s" ch))
+               (clear-line 0))))
+#+END_SRC
+
+Notice that instead of a closure over a variable characters we use a
+slot ~app~ in the ~*console*~. Function ~user-action~ may be defined
+from a REPL, and when the user presses C-u it will be executed. It may
+be used for instance to change the configuration. We still need to add
+appropriate methods which set the console on the configuration change.
+
+#+BEGIN_SRC lisp
+  (defmethod (setf fgc) :after (rgb (instance console))
+    (apply #'set-foreground-color rgb))
+
+  (defmethod (setf bgc) :after (rgb (instance console))
+    (apply #'set-background-color rgb))
+
+  (defmethod (setf pos) :before (pos (instance console))
+    (check-type (car pos) (integer 1))
+    (check-type (cdr pos) (integer 1)))
+
+  (defmethod (setf pos) :after (pos (instance console))
+    (set-cursor-position (car pos) (cdr pos)))
+
+  (defmethod (setf cvp) :after (cvp (instance console))
+    (setf (cursor-visibility) (not (null cvp))))
+
+  ;; for example
+  (defun user-action ()
+    (setf (fgc *console*) (list (random 255) (random 255) (random 255)))
+    (setf (bgc *console*) (list (random 255) (random 255) (random 255)))
+    (clear-console))
+#+END_SRC
+
+We still don't have any means to limit the terminal region for output.
+This operation is known in graphics as clipping. We are going to
+implement a flexible mechanism based on dynamic variables. For simple
+clipping we provide min/max row/col, and for something more demanding
+use cases we allow providing a custom predicate. The macro is called
+~with-clipping~ and may be nested to achieve intersection of clipping
+areas.
+
+To enforce constraints imposed by clipping we will define a an
+operator for the user, which is meant for printing on the console.
+The macro ~out~ allows specifying a row, a column, a foreground color
+and a background color. It respects clipping limitations by testing
+each character. When the operator unwinds it brings back a previous
+state of the console.
+
+#+BEGIN_SRC lisp
+  (defvar *row1* '(1))
+  (defvar *col1* '(1))
+  (defvar *row2* '(24))
+  (defvar *col2* '(80))
+  (defvar *fun* (list (constantly t)))
+
+  (defmacro with-clipping ((&key fun row1 col1 row2 col2) &body body)
+    `(let (,@(when row1 `((*row1* (cons (max (car *row1*) ,row1) *row1*))))
+           ,@(when col1 `((*col1* (cons (max (car *col1*) ,col1) *col1*))))
+           ,@(when row2 `((*row2* (cons (min (car *row2*) ,row2) *row1*))))
+           ,@(when col2 `((*col2* (cons (min (car *col2*) ,col2) *col2*))))
+           ,@(when fun  `((*fun*  (cons (let ((old (car *fun*)))
+                                          (lambda (row col)
+                                            (and (funcall ,fun row col)
+                                                 (funcall old row col))))
+                                        ,*fun*)))))
+       ,@body))
+
+  (defmacro letf (bindings &body body)
+    (loop for (place value) in bindings
+          for old-val = (gensym)
+          collect `(,old-val ,place)      into saves
+          collect `(setf ,place ,value)   into store
+          collect `(setf ,place ,old-val) into restore
+          finally (return `(let (,@saves)
+                             (unwind-protect (progn ,@store ,@body)
+                               ,@restore)))))
+
+  (defun inside (row col)
+    (and (<= (car *row1*) row (car *row2*))
+         (<= (car *col1*) col (car *col2*))
+         (funcall (car *fun*) row col)))
+
+  (defmacro out ((&key row col fgc bgc) object)
+    "Put an object on a console"
+    (let ((pos (cond ((and row col) `(cons ,row ,col))
+                     (row `(cons ,row (cdr (pos *console*))))
+                     (col `(cons (car (pos *console*)) col)))))
+      `(let ((str (princ-to-string ,object)))
+         (assert (null (find #\newline str)))
+         (letf (((pos *console*) (cons (or ,row (car (pos *console*)))
+                                       (or ,col (cdr (pos *console*)))))
+                ,@(when fgc `(((fgc *console*) ,fgc)))
+                ,@(when bgc `(((bgc *console*) ,bgc))))
+           (let* ((pos (pos *console*))
+                  (row (car pos))
+                  (col (cdr pos)))
+             (loop for c from col
+                   for s across str
+                   when (inside row c)
+                     do (put s)))))))
+#+END_SRC
+
+Another important functionality is a way to clear a specific region.
+That and other user-facing control utilities will be available from
+the operator ~ctl~.
+
+#+BEGIN_SRC lisp
+  (defun clear-rectangle (r1 c1 r2 c2)
+    (loop with str = (make-string (1+ (- c2 c1))
+                                  :initial-element #\space)
+          for r from r1 upto r2
+          do (out (:row r :col c1) str)))
+
+  (defmacro ctl (&rest operations)
+    `(progn
+       ,@(loop for op in operations
+               collect (destructuring-bind (name &rest args)
+                           op
+                         (ecase name
+                           (:clr `(clear-rectangle ,@args))
+                           (:fgc `(setf (fgc *console*) (list ,@args)))
+                           (:bgc `(setf (bgc *console*) (list ,@args)))
+                           (:cvp `(setf (cursor-visibility) ,@args))
+                           (:pos `(setf (pos *console*) (cons ,(car args)
+                                                              ,(cdr args)))))))))
+#+END_SRC
+
+Time to use our new tools to implement the show-screen and the user
+function:
+
+#+BEGIN_SRC lisp
+  (defun show-screen ()
+    (loop for ch = (read-input)
+          until (null ch)
+          do (push ch (app *console*))
+             (cond ((keyp ch #\Q :c)
+                    (cl-user::quit))
+                   ((keyp ch #\R :c)
+                    (setf (app *console*) nil)
+                    (clear-console))
+                   ((keyp ch #\U :c)
+                    (ignore-errors (user-action)))))
+    (let ((ch (app *console*)))
+      (setf (app *console*)
+            (subseq ch 0 (min 12 (length ch)))))
+    (flet ((ll (row col)
+             (or (and (< (abs (- (+ col row) 26)) 2)
+                      (<= col 20))
+                 (< (abs (- (+ (- 40 col) row) 26)) 2))))
+      (with-clipping (:fun #'ll :row1 2 :row2 11)
+        (out (:row (1+ (random 12))
+              :col (1+ (random 40))
+              :bgc `(0 0 0)
+              :fgc '(#xbb #x00 #x00))
+             (alexandria:random-elt '("X" "O"))))
+      (with-clipping (:fun (lambda (row col)
+                             (or (= row 1)
+                                 (= row 12)
+                                 (funcall (complement #'ll) row col))))
+        (out (:row (1+ (random 12))
+              :col (1+ (random 40))
+              :bgc `(0 0 0)
+              :fgc (list #x00
+                         (alexandria:random-elt '(#x44 #x44 #x44 #x44 #x66))
+                         #x44))
+             (alexandria:random-elt '("+" "-")))))
+    (ctl (:clr 1 44 12 (car *col2*)))
+    (loop for row from 1
+          for ch in (app *console*)
+          do (out (:row row :col 44)
+                  (prin1-to-string ch))))
+
+  (defun user-action ()
+    (ctl (:fgc (random 255) (random 255) (random 255))
+         (:bgc (random 255) (random 255) (random 255))
+         (:clr 4 4 10 10)))
+#+END_SRC
+
+Clearing the screen part with ~(:clr 1 44 12 (car *col2*))~ may cause
+a flicker on some terminal emulators. For now we will reduce the FPS,
+but later we will take another approach to avoid that.
+
+#+BEGIN_SRC lisp
+  (defclass console ()
+    (#|...|#)
+    (:default-initargs
+     #|...|#
+     :fps 10
+     #|...|#))
+#+END_SRC
+
+* Determining the terminal dimensions
+
+Time to learn how to determine the terminal size. We already know how
+to set the cursor position. Interesting property of this command is
+that if we request to set its position beyond the terminal limits, the
+cursor will be positioned on a terminal boundary instead. That's how
+we are going to determine the terminal size.
+
+#+BEGIN_SRC lisp
+  (defun request-cursor-position ()
+    (csi 6 "n"))
+
+  (defun user-action ()
+    (with-cursor-position (10 3)
+      (request-cursor-position)))
+#+END_SRC
+
+When we execute the user command by pressing C-u our program will tell
+us, that an unknown sequence has been read: ~ESC [ 10 3 R~. Indeed,
+that's the sequence which is documented as a result. We will define a
+condition to signal, that the cursor-position-report has arrived. When
+we read the sequence a condition is signaled and the gesture is
+returned.
+
+#+BEGIN_SRC lisp
+  (define-condition cursor-position-report ()
+    ((rows :initarg :row :reader row)
+     (cols :initarg :col :reader col)))
+
+  (define-key-resolver #\[ #\R (row col)
+    (signal 'cursor-position-report :row row :col col)
+    (make-instance 'gesture
+                   :key (format nil "Cursor position: ~s ~s" row col)
+                   :mods 0))
+#+END_SRC
+
+We will use it to print a character on the right-bottom-most cell to
+see if it works. An important bit of information is that if we set the
+cursor beyond the terminal, it will be positioned over the last cell
+instead, so if we request the position back we should receive a total
+number of rows and columns of the console.
+
+To do that we'll add slots to a class representing the console and add
+a handler-case above read-input which assigns these slots. Moreover we
+modify the ~user-action~ to request the cursor position after setting
+it to some unreasonably big value. Now when we press C-u the character
+should appear on the bottom-right corner of the terminal. Notice, that
+we also update the clipping area (*row2* and *col2*). Otherwise our
+character could have been filtered.
+
+#+BEGIN_SRC lisp
+  (defclass console ()
+    (#|...|#
+     (rows :accessor rows :initform 24 :documentation "Terminal number of rows.")
+     (cols :accessor cols :initform 80 :documentation "Terminal number of cols."))
+    #|...|#)
+
+  (defun show-screen ()
+    (loop for ch = (handler-case (read-input)
+                     (cursor-position-report (c)
+                       (let ((row (row c))
+                             (col (col c)))
+                         (setf *row2* (list row)
+                               ,*col2* (list col)
+                               (rows *console*) row
+                               (cols *console*) col))
+                       nil))
+          #|...|#)
+    #|...|#
+    (out (:row (rows *console*)
+          :col (cols *console*))
+         "×"))
+
+  (defun user-action ()
+    (with-cursor-position ((expt 2 16) (expt 2 16))
+      (request-cursor-position)))
+#+END_SRC
+
+We are left with a few problems:
+
+- old markers don't disappear unless we reset the whole console
+- any cursor position request will end up in resizing of the console
+- some terminals emit ambigous sequence ~ESC [ 1 2 R~ for S-F3
+- console is not resized automatically when the terminal is resized
+
+For now we will tackle only the issue of resizing the console when the
+terminal window is resized. The other three will be addressed in the
+last section. When the terminal window is changed the system sends a
+signal SIGWINCH. We want to handle it, so we are going to extend our
+~raw_mode.c~ program.
+
+#+BEGIN_SRC c
+  struct sigaction *enable_sigwinch(void(*catch_function)(int)) {
+    struct sigaction *old_action = malloc(sizeof(struct sigaction));
+    struct sigaction new_action;
+    new_action.sa_handler = catch_function;
+    sigemptyset (&new_action.sa_mask);
+    new_action.sa_flags = 0;
+    sigaction(SIGWINCH, &new_action, old_action);
+    return old_action;
+  }
+
+  void disable_sigwinch(struct sigaction *old_action) {
+    sigaction(SIGWINCH, old_action, NULL);
+    free(old_action);
+  }
+#+END_SRC
+
+And a glue code for Lisp:
+
+#+BEGIN_SRC lisp
+  (cffi:defcfun (enable-sigwinch "enable_sigwinch")
+      :pointer
+    (callback :pointer))
+
+  (cffi:defcfun (disable-sigwinch "disable_sigwinch")
+      :void
+    (handler :pointer))
+
+  (cffi:defcallback sigwinch :void
+      ((signum :int))
+    (declare (ignore signum))
+    (update-console-dimensions))
+#+END_SRC
+
+And functions doing the actual job. ~get-cursor-position~ works
+synchronously and ignores all input until it is either interrupted
+with C-c or until the cursor-position report is signaled. We may now
+remove the handler-case from the function ~show-screen~. Notice, that
+~update-console-dimensions~ works differently when it is called in a
+context of a console and when it is called from the interrupt handler
+which doesn't have ~*console*~ bound.
+
+#+BEGIN_SRC lisp
+  (defun get-cursor-position ()
+    (request-cursor-position)
+    (handler-case (loop until (keyp (read-input) #\C :c))
+      (cursor-position-report (c)
+        (values (row c) (col c)))))
+
+  (defvar *console-dirty-p* t)
+
+  (defun update-console-dimensions ()
+    (if (boundp '*console*)
+        (with-cursor-position ((expt 2 16) (expt 2 16))
+          (multiple-value-bind (rows cols)
+              (get-cursor-position)
+            (setf (rows *console*) rows
+                  (cols *console*) cols
+                  ,*row2* (list rows)
+                  ,*col2* (list cols))
+            (setf *console-dirty-p* nil)))
+        (setf *console-dirty-p* t)))
+#+END_SRC
+
+Time to modify init-console and close-console to call our new
+functions. Moreover we should query the terminal size when a console
+is created.
+
+#+BEGIN_SRC lisp
+  (defun init-console ()
+    (prog1 (list (enable-raw)
+                 (enable-sigwinch (cffi:callback sigwinch)))
+      (reset-console)))
+
+  (defun close-console (handler)
+    (reset-console)
+    (destructuring-bind (termios sigaction) handler
+      (disable-sigwinch sigaction)
+      (disable-raw termios)))
+
+  (defmethod initialize-instance :after
+      ((instance console) &key fgc bgc pos cvp)
+    (setf (hnd instance) (init-console))
+    (apply #'set-foreground-color fgc)
+    (apply #'set-background-color bgc)
+    (set-cursor-position (car pos) (cdr pos))
+    (setf (cursor-visibility) cvp)
+    (let ((*console* instance))
+      (update-console-dimensions)))
+#+END_SRC
+
+There is still a problem with this code. We call functions writing and
+reading from the terminal, and at any point of time we may receive an
+interrupt (and enter a debugger). We are going to run the console loop
+in a separate thread (add bordeaux-threads to the ASD file now), so
+the main thread may be safely interrupted.
+
+#+BEGIN_SRC lisp
+  (defmacro with-console ((&rest args
+                           &key ios fgc bgc cvp fps &allow-other-keys)
+                          &body body)
+    (declare (ignore fgc bgc cvp fps))
+    `(let ((proc (bt:make-thread
+                  (lambda ()
+                    (handler-case
+                        (let* ((*console-io* ,ios)
+                               (*console* (make-instance 'console ,@args)))
+                          (unwind-protect (progn ,@body)
+                            (close-console (hnd *console*))))
+                      (serious-condition (c)
+                        (format t "Exit due to~%~a~%" c)
+                        (cl-user::quit)))))))
+       (bt:join-thread proc)))
+#+END_SRC
+
+When the flag ~*console-dirty-p*~ is true, we should update the
+terminal dimensions. It is part of the application logic.
+
+#+BEGIN_SRC lisp
+  (defun start-display ()
+    (swank:create-server)
+    (with-console (:ios *terminal-io*)
+      (clear-console)
+      (loop (sleep (/ (fps *console*)))
+            (when *console-dirty-p*
+              (update-console-dimensions))
+            (show-screen))))
+#+END_SRC
+
+Now when we resize the terminal the marker is printed in the
+appropriate location right away.
