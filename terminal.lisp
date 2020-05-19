@@ -13,6 +13,19 @@
     :void
   (handler :pointer))
 
+(cffi:defcfun (enable-sigwinch "enable_sigwinch")
+    :pointer
+  (callback :pointer))
+
+(cffi:defcfun (disable-sigwinch "disable_sigwinch")
+    :void
+  (handler :pointer))
+
+(cffi:defcallback sigwinch :void
+    ((signum :int))
+  (declare (ignore signum))
+  (update-console-dimensions))
+
 
 (defmacro letf (bindings &body body)
   (loop for (place value) in bindings
@@ -335,16 +348,38 @@ Returns a generalized boolean (when true returns a gesture)."
 
 
 
+(defvar *console*)
+(defvar *console-io*)
+(defvar *console-dirty-p* t)
+
 (defun init-console ()
-  (prog1 (enable-raw)
+  (prog1 (list (enable-raw)
+               (enable-sigwinch (cffi:callback sigwinch)))
     (reset-console)))
 
 (defun close-console (handler)
   (reset-console)
-  (disable-raw handler))
+  (destructuring-bind (termios sigaction) handler
+    (disable-sigwinch sigaction)
+    (disable-raw termios)))
 
-(defvar *console*)
-(defvar *console-io*)
+(defun get-cursor-position ()
+  (request-cursor-position)
+  (handler-case (loop until (keyp (read-input) #\C :c))
+    (cursor-position-report (c)
+      (values (row c) (col c)))))
+
+(defun update-console-dimensions ()
+  (if (boundp '*console*)
+      (with-cursor-position ((expt 2 16) (expt 2 16))
+        (multiple-value-bind (rows cols)
+            (get-cursor-position)
+          (setf (rows *console*) rows
+                (cols *console*) cols
+                *row2* (list rows)
+                *col2* (list cols))
+          (setf *console-dirty-p* nil)))
+      (setf *console-dirty-p* t)))
 
 (defclass console ()
   ((ios :initarg :ios :accessor ios :documentation "I/O stream for the terminal.")
@@ -373,8 +408,8 @@ Returns a generalized boolean (when true returns a gesture)."
   (apply #'set-background-color bgc)
   (set-cursor-position (car pos) (cdr pos))
   (setf (cursor-visibility) cvp)
-  (setf (rows instance) 24
-        (cols instance) 80))
+  (let ((*console* instance))
+    (update-console-dimensions)))
 
 (defmethod (setf fgc) :after (rgb (instance console))
   (apply #'set-foreground-color rgb))
@@ -396,29 +431,30 @@ Returns a generalized boolean (when true returns a gesture)."
                          &key ios fgc bgc cvp fps &allow-other-keys)
                         &body body)
   (declare (ignore fgc bgc cvp fps))
-  `(let* ((*console-io* ,ios)
-          (*console* (make-instance 'console ,@args)))
-     (unwind-protect (progn ,@body)
-       (close-console (hnd *console*)))))
+  `(let ((proc (bt:make-thread
+                (lambda ()
+                  (handler-case
+                      (let* ((*console-io* ,ios)
+                             (*console* (make-instance 'console ,@args)))
+                        (unwind-protect (progn ,@body)
+                          (close-console (hnd *console*))))
+                    (serious-condition (c)
+                      (format t "Exit due to~%~a~%" c)
+                      (cl-user::quit)))))))
+     (bt:join-thread proc)))
 
 (defun start-display ()
   (swank:create-server)
   (with-console (:ios *terminal-io*)
     (clear-console)
     (loop (sleep (/ (fps *console*)))
+          (when *console-dirty-p*
+            (update-console-dimensions))
           (show-screen))))
 
 (declaim (notinline show-screen))
 (defun show-screen ()
-  (loop for ch = (handler-case (read-input)
-                   (cursor-position-report (c)
-                     (let ((row (row c))
-                           (col (col c)))
-                       (setf *row2* (list row)
-                             *col2* (list col)
-                             (rows *console*) row
-                             (cols *console*) col))
-                     nil))
+  (loop for ch = (read-input)
         until (null ch)
         do (push ch (app *console*))
            (cond ((keyp ch #\Q :c)
