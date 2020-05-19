@@ -150,6 +150,8 @@
       (csi "?" 2 5 "h")
       (csi "?" 2 5 "l")))
 
+(defun request-cursor-position ()
+  (csi 6 "n"))
 
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
@@ -243,6 +245,16 @@ Returns a generalized boolean (when true returns a gesture)."
 (define-key-resolver #\O #\Q (num1 num2) (maybe-combo :f2 num2))
 (define-key-resolver #\O #\R (num1 num2) (maybe-combo :f3 num2))
 (define-key-resolver #\O #\S (num1 num2) (maybe-combo :f4 num2))
+
+(define-condition cursor-position-report ()
+  ((row :initarg :row :reader row)
+   (col :initarg :col :reader col)))
+
+(define-key-resolver #\[ #\R (row col)
+  (signal 'cursor-position-report :row row :col col)
+  (make-instance 'gesture
+                 :key (format nil "Cursor position: ~s ~s" row col)
+                 :mods 0))
 
 (defun resolve-key (group num1 num2 |Hasta la vista, baby|)
   (if (null |Hasta la vista, baby|)
@@ -342,7 +354,9 @@ Returns a generalized boolean (when true returns a gesture)."
    (cvp :initarg :cvp :accessor cvp :documentation "Cursor visibility.")
    (fps :initarg :fps :accessor fps :documentation "Desired framerate.")
    (app :initarg :app :accessor app :documentation "Application state.")
-   (hnd               :accessor hnd :documentation "Terminal handler."))
+   (hnd               :accessor hnd :documentation "Terminal handler.")
+   (rows :accessor rows             :documentation "Terminal number of rows.")
+   (cols :accessor cols             :documentation "Terminal number of cols."))
   (:default-initargs
    :ios (error "I/O stream must be specified.")
    :fgc '(#xff #xa0 #xa0)
@@ -358,7 +372,9 @@ Returns a generalized boolean (when true returns a gesture)."
   (apply #'set-foreground-color fgc)
   (apply #'set-background-color bgc)
   (set-cursor-position (car pos) (cdr pos))
-  (setf (cursor-visibility) cvp))
+  (setf (cursor-visibility) cvp)
+  (setf (rows instance) 24
+        (cols instance) 80))
 
 (defmethod (setf fgc) :after (rgb (instance console))
   (apply #'set-foreground-color rgb))
@@ -394,7 +410,15 @@ Returns a generalized boolean (when true returns a gesture)."
 
 (declaim (notinline show-screen))
 (defun show-screen ()
-  (loop for ch = (read-input)
+  (loop for ch = (handler-case (read-input)
+                   (cursor-position-report (c)
+                     (let ((row (row c))
+                           (col (col c)))
+                       (setf *row2* (list row)
+                             *col2* (list col)
+                             (rows *console*) row
+                             (cols *console*) col))
+                     nil))
         until (null ch)
         do (push ch (app *console*))
            (cond ((keyp ch #\Q :c)
@@ -432,9 +456,11 @@ Returns a generalized boolean (when true returns a gesture)."
   (loop for row from 1
         for ch in (app *console*)
         do (out (:row row :col 44)
-                (prin1-to-string ch))))
+                (prin1-to-string ch)))
+  (out (:row (rows *console*)
+        :col (cols *console*))
+       "×"))
 
 (defun user-action ()
-  (ctl (:fgc (random 255) (random 255) (random 255))
-       (:bgc (random 255) (random 255) (random 255))
-       (:clr 4 4 10 10)))
+  (with-cursor-position ((expt 2 16) (expt 2 16))
+    (request-cursor-position)))
