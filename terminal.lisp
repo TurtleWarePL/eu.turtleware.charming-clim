@@ -86,6 +86,7 @@
                          (:fgc `(setf (fgc *console*) (list ,@args)))
                          (:bgc `(setf (bgc *console*) (list ,@args)))
                          (:cvp `(setf (cursor-visibility) ,@args))
+                         (:ptr `(setf (mouse-tracking) ,@args))
                          (:pos `(setf (pos *console*) (cons ,(car args)
                                                             ,(cdr args)))))))))
 
@@ -429,6 +430,7 @@ Returns a generalized boolean (when true returns a gesture)."
    (bgc :initarg :bgc :accessor bgc :documentation "Background color.")
    (pos :initarg :pos :accessor pos :documentation "Cursor position.")
    (cvp :initarg :cvp :accessor cvp :documentation "Cursor visibility.")
+   (ptr :initarg :ptr :accessor ptr :documentation "Pointer tracking.")
    (fps :initarg :fps :accessor fps :documentation "Desired framerate.")
    (app :initarg :app :accessor app :documentation "Application state.")
    (hnd               :accessor hnd :documentation "Terminal handler.")
@@ -440,16 +442,18 @@ Returns a generalized boolean (when true returns a gesture)."
    :bgc '(#x22 #x22 #x22)
    :pos '(1 . 1)
    :cvp nil
+   :ptr t
    :fps 10
    :app nil))
 
 (defmethod initialize-instance :after
-    ((instance console) &key fgc bgc pos cvp)
+    ((instance console) &key fgc bgc pos cvp ptr)
   (setf (hnd instance) (init-console))
   (apply #'set-foreground-color fgc)
   (apply #'set-background-color bgc)
   (set-cursor-position (car pos) (cdr pos))
   (setf (cursor-visibility) cvp)
+  (setf (mouse-tracking) ptr)
   (let ((*console* instance))
     (update-console-dimensions)))
 
@@ -465,6 +469,9 @@ Returns a generalized boolean (when true returns a gesture)."
 
 (defmethod (setf pos) :after (pos (instance console))
   (set-cursor-position (car pos) (cdr pos)))
+
+(defmethod (setf ptr) :after (ptr (instance console))
+  (setf (mouse-tracking) (not (null ptr))))
 
 (defmethod (setf cvp) :after (cvp (instance console))
   (setf (cursor-visibility) (not (null cvp))))

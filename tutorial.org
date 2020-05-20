@@ -1263,3 +1263,29 @@ When you press C-u now all mouse events should be reported i.e as
 some terminals despite claiming that they are xterm-compatible, may
 behave differently. I.e on KDE's Konsole mouse motion is reported only
 when any mouse button is pressed.
+
+Finally it is time to integrate the pointer tracking in our ctl
+interface and to the console class.
+
+#+BEGIN_SRC lisp
+(defmacro ctl (&rest operations)
+  #|...|#
+  (:ptr `(setf (mouse-tracking) ,@args))
+  #|...|#)
+
+(defclass console ()
+  (#|...|#
+   (ptr :initarg :ptr :accessor ptr :documentation "Pointer tracking.")
+   #|...|#)
+  (:default-initargs #|...|# :ptr t #|... |#))
+
+
+(defmethod initialize-instance :after
+    ((instance console) &key fgc bgc pos cvp ptr)
+  #|...|#
+  (setf (mouse-tracking) ptr)
+  #|...|#)
+
+(defmethod (setf ptr) :after (ptr (instance console))
+  (setf (mouse-tracking) (not (null ptr))))
+#+END_SRC
