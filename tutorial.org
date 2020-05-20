@@ -1138,3 +1138,128 @@ terminal dimensions. It is part of the application logic.
 
 Now when we resize the terminal the marker is printed in the
 appropriate location right away.
+
+* Adding a mouse tracking support
+
+Terminal emulators which are compatible with xterm allow tracking the
+mouse. There are few possible modes (i.e track only mouse clicks, or
+track everything, motion included), as well as a few schemes for
+reporting the event. We are interested in tracking all events and in
+extended report (because the "default" scheme has serious dimension
+limitations due to byte encoding).
+
+#+BEGIN_SRC lisp
+  ;;; (csi ? tracking ; encoding h/l)
+  ;;; tracking: 1000 - normal, 1002 - button, 1003 - all motion
+  ;;; encoding: 1006 - sgr encoding scheme
+  (defun (setf mouse-tracking) (enabledp)
+    (if enabledp
+        (csi "?" 1003 ";" 1006 "h")
+        (csi "?" 1003 "l")))
+#+END_SRC
+
+Each event is reported as ~ESC [ > Cb;Cx;Cy m/M~. Cb encodes pressed
+buttons, Cx and Cy are integers put in text for the event column and
+row. Until now we were only parsing input sequences which have two
+numbers, so it is time to improve the parse-escape-sequence function
+to accept any number of semicolon separated integers:
+
+#+BEGIN_SRC lisp
+  (defun parse-escape-sequence (&aux char)
+    (flet ((read-num ()
+             (loop while (and char (digit-char-p char))
+                   collecting char into num
+                   do (setf char (read-char-no-hang *console-io*))
+                   finally (when num
+                             (return (parse-integer (coerce num 'string)))))))
+      (loop
+        do (setf char (read-char-no-hang *console-io*))
+        collect (or (read-num) 1) into nums
+        until (or (null char)
+                  (char/= #\; char))
+        finally (return (values nums char)))))
+
+  (defun escapep (ch)
+    (unless (char= ch +escape+)
+      (return-from escapep nil))
+    (alexandria:if-let ((next-ch (read-char-no-hang *console-io*)))
+      ;; A keycode: [\[NO](<num>)(;<num>)[~A-Z].
+      (multiple-value-bind (nums terminator)
+          (parse-escape-sequence)
+        (destructuring-bind (&optional (num1 1) (num2 1)) nums
+          (resolve-key next-ch num1 num2 terminator)))
+      :escape))
+#+END_SRC
+
+Mouse state encoded in ~Cb~ works as follows:
+
+- if the sixth bit (32) is "on", it is a motion event
+- otherwise terminating character #\M is "press", #\m is "release"
+- modifiers are encoded in third to fifth bits (shift, alt, ctrl)
+- pressed mouse button is encoded in two first bits, and seventh/eight
+
+This bit twiddling is a good opportunity to use ldb and ash as seen
+below:
+
+#+BEGIN_SRC lisp
+  (defun resolve-mouse (btn col row |Hasta la vista, baby|)
+    (let ((state (cond ((not (zerop (ldb (cons 1 5) btn))) :motion)
+                       ((char= #\M |Hasta la vista, baby|) :press)
+                       ((char= #\m |Hasta la vista, baby|) :release)))
+          (mods (+ (if (zerop (ldb (cons 1 2) btn)) 0 +shift-mod+)
+                   (if (zerop (ldb (cons 1 3) btn)) 0 +alt-mod+)
+                   (if (zerop (ldb (cons 1 4) btn)) 0 +ctrl-mod+)))
+          (key (case (+ (ldb (cons 2 0) btn)
+                        (ash (ldb (cons 2 6) btn) 2))
+                 (#b0000 :left)
+                 (#b0001 :middle)
+                 (#b0010 :right)
+                 (#b0011 :none)
+                 ;; 64
+                 (#b0100 :wheel-up)
+                 (#b0101 :wheel-down)
+                 (#b0110 :wheel-left)
+                 (#b0111 :wheel-right)
+                 ;; 128 (xterm >= 341)
+                 (#b1000 :extra-1)
+                 (#b1001 :extra-2)
+                 (#b1010 :extra-3)
+                 (#b1011 :extra-4))))
+      (make-instance 'gesture
+                     :key (format nil "row: ~2d col: ~2d [~a ~a] ~a"
+                                  row col key btn state)
+                     :mods mods)))
+#+END_SRC
+
+Now we add handling mouse to the ~escapep~ function and allow enabling
+it in ~user-action~:
+
+#+BEGIN_SRC lisp
+  (defun escapep (ch)
+    (unless (char= ch +escape+)
+      (return-from escapep nil))
+    (alexandria:if-let ((next-ch (read-char-no-hang *console-io*)))
+      ;; A keycode: [\[NO](<num>)(;<num>)[~A-Z].
+      ;; SGR mouse: '[' '<' num ';' num ';' num ';' [Mm]
+      (if (and (char= #\[ next-ch)
+               (char= #\< (peek-char t *console-io* nil #\x))
+               (read-char-no-hang *console-io*))
+          (multiple-value-bind (nums terminator)
+              (parse-escape-sequence)
+            (destructuring-bind (num1 num2 num3) nums
+              (resolve-mouse num1 num2 num3 terminator)))
+          (multiple-value-bind (nums terminator)
+              (parse-escape-sequence)
+            (destructuring-bind (&optional (num1 1) (num2 1)) nums
+              (resolve-key next-ch num1 num2 terminator))))
+      :escape))
+
+  (defun user-action ()
+    (setf (mouse-tracking) t))
+#+END_SRC
+
+When you press C-u now all mouse events should be reported i.e as
+~#<"row: 13 col: 95 [LEFT 0] RELEASE" NIL>~. It is noteworthy that
+some terminals despite claiming that they are xterm-compatible, may
+behave differently. I.e on KDE's Konsole mouse motion is reported only
+when any mouse button is pressed.

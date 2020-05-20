@@ -163,6 +163,15 @@
       (csi "?" 2 5 "h")
       (csi "?" 2 5 "l")))
 
+;;; (csi ? tracking ; encoding h/l)
+;;; tracking: 1000 - normal, 1002 - button, 1003 - all motion
+;;;           1004 - focus in/out
+;;; encoding: 1006 - sgr encoding scheme
+(defun (setf mouse-tracking) (enabledp)
+  (if enabledp
+      (csi "?" 1003 ";" 1006 "h")
+      (csi "?" 1003 "l")))
+
 (defun request-cursor-position ()
   (csi 6 "n"))
 
@@ -290,32 +299,65 @@ Returns a generalized boolean (when true returns a gesture)."
                               (make-instance 'gesture :key k :mods 0))))
                num1 num2)))
 
-(defun parse-escape-sequence ()
-  (let ((char (read-char-no-hang *console-io*))
-        (num1 1)
-        (num2 1))
-    (flet ((read-num ()
-             (loop while (and char (digit-char-p char))
-                   collecting char into num
-                   do (setf char (read-char-no-hang *console-io*))
-                   finally (when num
-                             (return (parse-integer (coerce num 'string)))))))
-      (setf num1 (or (read-num) 1))
-      (when (null char)
-        (return-from parse-escape-sequence (values num1 num2 char)))
-      (when (char= char #\;)
-        (setf char (read-char-no-hang *console-io*)
-              num2 (or (read-num) 1)))
-      (values num1 num2 char))))
+(defun resolve-mouse (btn col row |Hasta la vista, baby|)
+  (let ((state (cond ((not (zerop (ldb (cons 1 5) btn))) :motion)
+                     ((char= #\M |Hasta la vista, baby|) :press)
+                     ((char= #\m |Hasta la vista, baby|) :release)))
+        (mods (+ (if (zerop (ldb (cons 1 2) btn)) 0 +shift-mod+)
+                 (if (zerop (ldb (cons 1 3) btn)) 0 +alt-mod+)
+                 (if (zerop (ldb (cons 1 4) btn)) 0 +ctrl-mod+)))
+        (key (case (+ (ldb (cons 2 0) btn)
+                      (ash (ldb (cons 2 6) btn) 2))
+               (#b0000 :left)
+               (#b0001 :middle)
+               (#b0010 :right)
+               (#b0011 :none)
+               ;; 64
+               (#b0100 :wheel-up)
+               (#b0101 :wheel-down)
+               (#b0110 :wheel-left)
+               (#b0111 :wheel-right)
+               ;; 128 (xterm >= 341)
+               (#b1000 :extra-1)
+               (#b1001 :extra-2)
+               (#b1010 :extra-3)
+               (#b1011 :extra-4))))
+    (make-instance 'gesture
+                   :key (format nil "row: ~2d col: ~2d [~a ~a] ~a"
+                                row col key btn state)
+                   :mods mods)))
+
+(defun parse-escape-sequence (&aux char)
+  (flet ((read-num ()
+           (loop while (and char (digit-char-p char))
+                 collecting char into num
+                 do (setf char (read-char-no-hang *console-io*))
+                 finally (when num
+                           (return (parse-integer (coerce num 'string)))))))
+    (loop
+      do (setf char (read-char-no-hang *console-io*))
+      collect (or (read-num) 1) into nums
+      until (or (null char)
+                (char/= #\; char))
+      finally (return (values nums char)))))
 
 (defun escapep (ch)
   (unless (char= ch +escape+)
     (return-from escapep nil))
   (alexandria:if-let ((next-ch (read-char-no-hang *console-io*)))
-    ;; The escape sequence grammar: [\[NO](<num>)(;<num>)[~A-Z].
-    (multiple-value-bind (num1 num2 terminator)
-        (parse-escape-sequence)
-      (resolve-key next-ch num1 num2 terminator))
+    ;; A keycode: [\[NO](<num>)(;<num>)[~A-Z].
+    ;; SGR mouse: '[' '<' num ';' num ';' num ';' [Mm]
+    (if (and (char= #\[ next-ch)
+             (char= #\< (peek-char t *console-io* nil #\x))
+             (read-char-no-hang *console-io*))
+        (multiple-value-bind (nums terminator)
+            (parse-escape-sequence)
+          (destructuring-bind (num1 num2 num3) nums
+            (resolve-mouse num1 num2 num3 terminator)))
+        (multiple-value-bind (nums terminator)
+            (parse-escape-sequence)
+          (destructuring-bind (&optional (num1 1) (num2 1)) nums
+            (resolve-key next-ch num1 num2 terminator))))
     :escape))
 
 (defun deletep (ch)
@@ -498,5 +540,4 @@ Returns a generalized boolean (when true returns a gesture)."
        "×"))
 
 (defun user-action ()
-  (with-cursor-position ((expt 2 16) (expt 2 16))
-    (request-cursor-position)))
+  (setf (mouse-tracking) t))
