@@ -98,10 +98,6 @@ name the C file "raw-mode.c", and the Lisp file "terminal.lisp". The
 directory will have a flat structure with the ASDF definition file
 ~eu.turtleware.charming-clim.asd~.
 
-I don't like ASDF so I won't focus on details of how and why this
-works, it is enough to say that it will work on systems with a C
-compiler ~cc~ on appropriate platforms which accept appropriate flags.
-
 #+BEGIN_SRC lisp
   (defpackage #:charming-clim-system
     (:use #:asdf #:cl)
@@ -139,10 +135,9 @@ compiler ~cc~ on appropriate platforms which accept appropriate flags.
 
 Now it is enough to load a system "eu.turtleware.charming-clim" in a
 terminal (not in Emacs!), and call
-~(eu.turtleware.charming-clim:start-display)~ to see on a screen a
-string "Hello World!". Now connect to the swank server and let the
-hacking commence. When you want to get your console back, type
-~(quit)~ in the REPL (or call another operator which stops your lisp).
+~(eu.turtleware.charming-clim::start-display)~ to see on the screen a
+string "Hello World!". Now connect to a swank server and let the
+hacking commence.
 
 * Escape sequences
 
@@ -156,7 +151,7 @@ escape sequences work you may refer to the following:
 
 Escape sequences are often chained and accept parameters. Numbers are
 encoded with characters with delimiters. Character case matters. Let's
-define three a few utilities.
+define a few utilities.
 
 #+BEGIN_SRC common-lisp
   (defun put (&rest args)
@@ -166,7 +161,7 @@ define three a few utilities.
 
   (defun esc (&rest args)
     "Escape sequence"
-    (apply #'put #\esc args))
+    (apply #'put (code-char #x1b) args))
 
   (defun csi (&rest args)
     "Control sequence introducer"
@@ -178,7 +173,7 @@ define three a few utilities.
 #+END_SRC
 
 Time to add a high level interface. These few functions illustrate how
-the terminal is controlled. I add more functions when I need them.
+the terminal is controlled. We'll add more functions when we need them.
 
 #+BEGIN_SRC lisp
   (defun reset-console ()
@@ -234,8 +229,8 @@ the terminal is controlled. I add more functions when I need them.
         (csi "?" 2 5 "l")))
 #+END_SRC
 
-And finally some more fun function. Typing the following in REPL while
-the terminal is open gives the most satisfying result. This example
+Time to something more fun. Typing the following in a REPL while the
+terminal is open gives the most satisfying result. The example below
 shows an important property of the terminal: first character is
 addressed with a coordinate [1, 1].
 
@@ -263,8 +258,8 @@ addressed with a coordinate [1, 1].
       (put str)))
 #+END_SRC
 
-Putting aside ~show-screen~ fun we'll improve the loop in
-~start-display~ so it is possible to modify the configuration easily.
+Now we'll improve the loop in ~start-display~ so it is possible to
+modify the configuration easily.
 
 #+BEGIN_SRC lisp
   (defun show-screen ()
@@ -306,9 +301,9 @@ that we can only read translated sequences, there is no portable way
 to access raw keycode press and release events. That is unfortunate.
 
 There are two characters which have a special meaning. ~ESC~ starts
-escape sequence and ~DEL~ is not a graphical character despite not
-being a control characters. That's why we will signify their
-uniqueness by defining appropriate constants.
+the escape sequence and ~DEL~ is not a graphical character (despite
+not being a control characters). We will signify their uniqueness by
+defining appropriate constants.
 
 #+BEGIN_SRC lisp
   (eval-when (:compile-toplevel :load-toplevel :execute)
@@ -319,7 +314,7 @@ uniqueness by defining appropriate constants.
 #+END_SRC
 
 From the parsing perspective when we read the input we may encounter
-on of the following situations:
+one of the following situations:
 
 - no characters are available
 - character is a graphic character (may span few bytes)
@@ -340,7 +335,7 @@ on of the following situations:
 #+END_SRC
 
 We will use ~read-char-no-hang~ to avoid blocking. ~read-input~ will
-return either NIL (for now available input), a graphical character, a
+return either NIL (for no available input), a graphical character, a
 keyword for known keys which are not graphical, or a gesture object if
 there are modifiers present (or a non-graphical character appears
 which has no known keyword representation).
@@ -429,12 +424,12 @@ Returns a generalized boolean (when true returns a gesture)."
     :delete))
 #+END_SRC
 
-Parsing escape sequences requires little more code. Exact sequences
-for keys vary between terminal emulators. On top of that some are
-ambigous. We are going to focus on the most widespread ones defined by
-xterm which should be compatible with most emulators. When the escape
-character is read and there is no futher input, we return ~:escape~.
-Otherwise we try to parse the sequence.
+Parsing an escape sequence requires more code. Exact sequence format
+for special keys vary between terminal emulators. On top of that some
+sequences are ambiguous. We are going to focus on the most widespread
+ones defined by xterm, which should be compatible with most
+emulators. When the escape character is read and there is no futher
+input, we return ~:escape~.  Otherwise we try to parse the sequence.
 
 #+BEGIN_SRC lisp
   (defun escapep (ch)
@@ -544,14 +539,14 @@ group and from the ~SS3~):
 And, finally, the ~resolve-key~ function which is called by
 ~escapep~. When the read is incomplete, then it assumes that a
 combination ALT+<char>, otherwise it calls the key resolver. If there
-is no defined resolved for the sequence we create an unknown gesture
+is no defined resolver for the sequence we create an unknown gesture
 which may be inspected for the actual characters typed.
 
 #+BEGIN_SRC lisp
   (defun resolve-key (group num1 num2 |Hasta la vista, baby|)
     (if (null |Hasta la vista, baby|)
         ;; When there is no terminating character, then it is probably a
-        ;; result of pressing ALT+<char>. This is ambigous, i.e ALT+[
+        ;; result of pressing ALT+<char>. This is ambiguous, i.e ALT+[
         ;; generates CSI. We try to be as robust as we can here.
         (maybe-combo (case group
                        (#.+escape+ :escape)
@@ -573,9 +568,8 @@ which may be inspected for the actual characters typed.
 With that all what is left is the test code, which will print read
 characters on the terminal, so we can verify if they are properly
 recognized. Notice, that we do not clear whole line, only the reminder
-of it after printing the sequence, to avoid an unnecessary
-flicker. Note, that some key combinations may be intercepted by the
-window manager.
+of it after printing the sequence, to avoid unnecessary flicker. Some
+key combinations may be intercepted by the window manager.
 
 #+BEGIN_SRC lisp
 (let ((characters nil))
@@ -612,14 +606,13 @@ parameter. This is to allow mapping the key ALT to META.
 We can do quite a lot already. Our previous demo, despite being pretty
 basic, proves that. We want to add some interactive behavior to the
 application, so we may assign actions to the key combinations. But
-first we'll reform our abstraction so there are no dangling global
+first we'll refactor our abstraction so there are no dangling global
 variables around.
 
 We also isolate the low-level terminal access in ~init-console~ and
 ~close-console~ functions, so we can treat the handler as an opaque
 object. We retain the variable ~*console-io*~, but we bind it only in
 the console context. We also bind a variable ~*console*~.
-
 
 #+BEGIN_SRC lisp
   (defun init-console ()
@@ -674,9 +667,9 @@ the console context. We also bind a variable ~*console*~.
             (show-screen))))
 #+END_SRC
 
-
 To add some interactive behavior we want to assign actions to keys.
-We'll define a predicate which decided whether the key is *that* key.
+We'll define a predicate which decides whether a key matches given
+parameters.
 
 #+BEGIN_SRC lisp
 (defun keyp (ch key &rest mods)
@@ -728,9 +721,9 @@ Now we will add three key combinations:
                (clear-line 0))))
 #+END_SRC
 
-Notice that instead of a closure over a variable characters we use a
-slot ~app~ in the ~*console*~. Function ~user-action~ may be defined
-from a REPL, and when the user presses C-u it will be executed. It may
+Notice that, instead of a closure over a variable characters, we use
+the slot ~app~ in the ~*console*~ object. Function ~user-action~ may
+be defined from REPL – when C-u is pressed it will be executed. It may
 be used for instance to change the configuration. We still need to add
 appropriate methods which set the console on the configuration change.
 
@@ -759,19 +752,16 @@ appropriate methods which set the console on the configuration change.
 #+END_SRC
 
 We still don't have any means to limit the terminal region for output.
-This operation is known in graphics as clipping. We are going to
+This operation is known as clipping in graphics. We are going to
 implement a flexible mechanism based on dynamic variables. For simple
-clipping we provide min/max row/col, and for something more demanding
-use cases we allow providing a custom predicate. The macro is called
-~with-clipping~ and may be nested to achieve intersection of clipping
-areas.
+clipping we provide min/max row/col, and for more complex use cases a
+custom predicate may be specified. The macro is called ~with-clipping~
+and may be nested to achieve intersection of the clipping areas.
 
-To enforce constraints imposed by clipping we will define a an
-operator for the user, which is meant for printing on the console.
 The macro ~out~ allows specifying a row, a column, a foreground color
 and a background color. It respects clipping limitations by testing
-each character. When the operator unwinds it brings back a previous
-state of the console.
+each character. The state of the console is left as it was before
+invoking the operator.
 
 #+BEGIN_SRC lisp
   (defvar *row1* '(1))
@@ -833,16 +823,14 @@ the operator ~ctl~.
 
 #+BEGIN_SRC lisp
   (defun clear-rectangle (r1 c1 r2 c2)
-    (loop with str = (make-string (1+ (- c2 c1))
-                                  :initial-element #\space)
+    (loop with str = (make-string (1+ (- c2 c1)) :initial-element #\space)
           for r from r1 upto r2
           do (out (:row r :col c1) str)))
 
   (defmacro ctl (&rest operations)
     `(progn
        ,@(loop for op in operations
-               collect (destructuring-bind (name &rest args)
-                           op
+               collect (destructuring-bind (name &rest args) op
                          (ecase name
                            (:clr `(clear-rectangle ,@args))
                            (:fgc `(setf (fgc *console*) (list ,@args)))
@@ -904,8 +892,9 @@ function:
 #+END_SRC
 
 Clearing the screen part with ~(:clr 1 44 12 (car *col2*))~ may cause
-a flicker on some terminal emulators. For now we will reduce the FPS,
-but later we will take another approach to avoid that.
+a flicker on terminal emulators with slow refresh rate. For now we
+will reduce the FPS, but later we will take another approach to avoid
+this problem.
 
 #+BEGIN_SRC lisp
   (defclass console ()
@@ -919,8 +908,8 @@ but later we will take another approach to avoid that.
 * Determining the terminal dimensions
 
 Time to learn how to determine the terminal size. We already know how
-to set the cursor position. Interesting property of this command is
-that if we request to set its position beyond the terminal limits, the
+to set a cursor position. Interesting property of this command is that
+if we request to set its position beyond the terminal limits, the
 cursor will be positioned on a terminal boundary instead. That's how
 we are going to determine the terminal size.
 
@@ -937,8 +926,7 @@ When we execute the user command by pressing C-u our program will tell
 us, that an unknown sequence has been read: ~ESC [ 10 3 R~. Indeed,
 that's the sequence which is documented as a result. We will define a
 condition to signal, that the cursor-position-report has arrived. When
-we read the sequence a condition is signaled and the gesture is
-returned.
+the sequence is read a condition is signaled and a gesture is returned.
 
 #+BEGIN_SRC lisp
   (define-condition cursor-position-report ()
@@ -998,7 +986,7 @@ We are left with a few problems:
 
 - old markers don't disappear unless we reset the whole console
 - any cursor position request will end up in resizing of the console
-- some terminals emit ambigous sequence ~ESC [ 1 2 R~ for S-F3
+- some terminals emit ambiguous sequence ~ESC [ 1 2 R~ for S-F3
 - console is not resized automatically when the terminal is resized
 
 For now we will tackle only the issue of resizing the console when the
@@ -1042,17 +1030,16 @@ And a glue code for Lisp:
 #+END_SRC
 
 And functions doing the actual job. ~get-cursor-position~ works
-synchronously and ignores all input until it is either interrupted
-with C-c or until the cursor-position report is signaled. We may now
-remove the handler-case from the function ~show-screen~. Notice, that
-~update-console-dimensions~ works differently when it is called in a
-context of a console and when it is called from the interrupt handler
-which doesn't have ~*console*~ bound.
+synchronously and ignores all input the cursor-position-report is
+signaled. We may now remove the handler-case from the function
+~show-screen~. ~update-console-dimensions~ works differently when it
+is called in a context of a console and when it is called from the
+interrupt handler.
 
 #+BEGIN_SRC lisp
   (defun get-cursor-position ()
     (request-cursor-position)
-    (handler-case (loop until (keyp (read-input) #\C :c))
+    (handler-case (loop (read-input))
       (cursor-position-report (c)
         (values (row c) (col c)))))
 
@@ -1099,10 +1086,10 @@ is created.
 #+END_SRC
 
 There is still a problem with this code. We call functions writing and
-reading from the terminal, and at any point of time we may receive an
-interrupt (and enter a debugger). We are going to run the console loop
-in a separate thread (add bordeaux-threads to the ASD file now), so
-the main thread may be safely interrupted.
+reading from the terminal, and at any time we may receive an interrupt
+(which will put us in a debugger). We are going to run the console
+loop in a separate thread (add bordeaux-threads to the ASD file now),
+so the main thread may be safely interrupted.
 
 #+BEGIN_SRC lisp
   (defmacro with-console ((&rest args
