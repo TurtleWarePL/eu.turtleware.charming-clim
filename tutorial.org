@@ -1276,3 +1276,273 @@ interface and to the console class.
 (defmethod (setf ptr) :after (ptr (instance console))
   (setf (mouse-tracking) (not (null ptr))))
 #+END_SRC
+
+* Extending examples
+
+Let's construct a few examples which will help us identify some
+problems. First move functions ~start-display~, ~show-screen~ and
+~user-action~ to a separate file ~examples.lisp~ (don't forget to add
+this file to the system definition).
+
+First we'll rework slightly our abstraction. First of all we'll
+introduce a frame-manager class which will be responsible for
+multiplexing input and output on the screen. It has two slots:
+
+- frames :: maintains a list of managed windows
+- active :: if this slot has a frame, then only this frame is rendered
+
+All events will be passed to the function handle-event for the
+frame-manager to manage. We'll bind few keys initially: C-q will exit
+the application and C-r will remove all frames and clear the screen.
+
+#+BEGIN_SRC lisp
+  (defclass frame-manager ()
+    ((frames :initarg :frames :accessor frames :documentation "All frames.")
+     (active :initarg :active :accessor active :documentation "Active frame."))
+    (:default-initargs :frames nil :active nil))
+
+  (defun handle-event (fm event)
+    (flet ((reset ()
+             (setf (frames fm) nil
+                   (active fm) nil)
+             (clear-console)))
+      (cond ((keyp event #\Q :c)
+             (cl-user::quit))
+            ((keyp event #\R :c)
+             (reset)))))
+
+  (defun display-screen (fm)
+    (alexandria:if-let ((frame (active fm)))
+      (render-frame frame)
+      (dolist (frame (frames fm))
+        (render-frame frame))))
+
+  (defun render-frame (huh?)
+    (declare (ignore huh?))
+    (error "niy!"))
+#+END_SRC
+
+We will refactor the function ~start-display~ to show a modeline at
+the top which displays the current number of rows, columns and the
+FPS. Moreover it will create the frame manager and call functions
+defined above. When we start the application we'll see a heart warming
+message "We are that good!", meaning that we were too fast to measure
+the time meanigfully.
+
+#+BEGIN_SRC lisp
+  (defun start-display ()
+    (swank:create-server)
+    (with-console (:ios *terminal-io*)
+      (clear-console)
+      (loop with rows = (rows *console*)
+            with cols = (cols *console*)
+            with fm = (make-instance 'frame-manager)
+            do (when *console-dirty-p*
+                 (update-console-dimensions)
+                 (setf rows (rows *console*)
+                       cols (cols *console*)))
+            do (loop for ch = (read-input)
+                     until (null ch)
+                     do (handle-event fm ch))
+            do (let (start stop delta)
+                 (setf start (get-internal-real-time))
+                 (display-screen fm)
+                 (setf stop (get-internal-real-time))
+                 (setf delta (/ (- stop start)
+                                internal-time-units-per-second))
+                 (ctl (:fgc #x22 #x22 #x22)
+                      (:bgc #xbb #xbb #xbb))
+                 (let* ((status (format nil "Rows ~3d, Cols ~3d, FPS ~8,2f"
+                                        (1- rows) cols (if (zerop delta)
+                                                           :|We are that good!|
+                                                           (/ 1.0 delta))))
+                        (len (length status)))
+                   (ctl (:clr 1 (1+ len) 1 cols))
+                   (out (:col 1 :row 1) status))
+                 (ctl (:fgc #xff #xa0 #xa0)
+                      (:bgc #x22 #x22 #x22))))))
+#+END_SRC
+
+Now we'll define a frame. A frame will be defined by its clipping
+region and the rendering function.
+
+#+BEGIN_SRC lisp
+  (defclass frame ()
+    ((rfn :initarg :rfn :accessor rfn :documentation "Rendering function.")
+     (fsz :initarg :fsz :accessor fsz :documentation "Frame dimensions.")))
+
+  (defun render-frame (frame)
+    (destructuring-bind (r1 c1 r2 c2) (fsz frame)
+      (with-clipping (:row1 r1 :col1 c1 :row2 r2 :col2 c2)
+        (funcall (rfn frame) frame))))
+#+END_SRC
+
+To have something useful to render we'll also define three demos:
+
+- colorful noise :: works like a white noise, but in color
+- animation :: draws a square bounding with constant speed
+- key press reporter :: prints events like previously
+
+We'll use them to illustrate issues with our rendering. Colorful noise
+run maximized will be our baseline benchmark (which proves that we are
+very inefficient), and when two frames overlap it will clearly show a
+flicker. Animation will also show flicker when we clear the background
+before drawing the square despite big fps. Also it is a fine example
+which illustrates how the animation speed should always be independent
+of fps. The last example shows right now that we have no meaningful
+way of obtaining input without stealing them from the frame manager
+and with small enough frame will illustrate necessity of scrollbars.
+
+#+BEGIN_SRC lisp
+  (defun make-noise-frame (r1 c1 r2 c2)
+    (flet ((make-noise-renderer (color)
+             (lambda (frame)
+               (destructuring-bind (r1 c1 r2 c2) (fsz frame)
+                 (loop for row from r1 upto r2
+                       do (loop for col from c1 upto c2
+                                do (out (:row row
+                                         :col col
+                                         :bgc `(0 0 0)
+                                         :fgc color)
+                                        (alexandria:random-elt '("+" "-")))))))))
+      (make-instance 'frame
+                     :rfn (make-noise-renderer
+                           (list (alexandria:random-elt '(#x22 #x88 #xff))
+                                 (alexandria:random-elt '(#x22 #x88 #xff))
+                                 (alexandria:random-elt '(#x22 #x88 #xff))))
+                     :fsz (list r1 c1 r2 c2))))
+
+  (defun make-animation-frame (r1 c1 r2 c2 speed)
+    (let ((last-time (get-internal-real-time))
+          (dc 1)
+          (current-row (truncate (+ r1 r2) 2))
+          (current-col (+ c1 2)))
+      (flet ((draw-square ()
+               (ctl (:bgc #x44 #x44 #x00)
+                    (:fgc #xff #xbb #x00)
+                    (:clr r1 c1 r2 c2))
+               (let* ((now (get-internal-real-time))
+                      (delta (- now last-time))
+                      (seconds (/ delta internal-time-units-per-second)))
+                 (incf current-col (* seconds speed dc))
+                 (setf last-time now))
+               (cond ((>= (+ current-col 2) c2)
+                      (setf dc -1))
+                     ((<= (- current-col 2) c1)
+                      (setf dc +1)))
+               (setf current-col
+                     (alexandria:clamp current-col (+ c1 2) (- c2 2)))
+               (loop with row = current-row
+                     with col = (round current-col)
+                     for r from (1- row) upto (1+ row)
+                     do (loop for c from (- col 2) upto (+ col 2)
+                              do (out (:row r :col c) "#")))))
+        (make-instance 'frame
+                       :rfn (lambda (frame)
+                              (declare (ignore frame))
+                              (draw-square))
+                       :fsz (list r1 c1 r2 c2)))))
+
+  (defun make-report-frame (r1 c1 r2 c2)
+    (flet ((reporter (frame)
+             (out (:row r1 :col c1)
+                  "I'd like to report the key, but I don't know how.")))
+     (make-instance 'frame
+                    :rfn #'reporter
+                    :fsz (list r1 c1 r2 c2))))
+#+END_SRC
+
+Finally we'd like to see them on the screen, so we'll bind C-n and C-m
+for two different scenarios. Also C-u will be bound to toggle the
+active frame (which is picked at random). Add the following clauses to
+cond in ~handle-event~:
+
+#+BEGIN_SRC lisp
+  (defun handle-event (fm event)
+    #|...|#
+    (cond
+      #|...|#
+      ((keyp event #\N :c)
+       (reset)
+       (setf (frames fm)
+             (list (make-noise-frame 4  2 12 20)
+                   (make-noise-frame 6 12 14 30)
+                   (make-animation-frame 4 36 10 78 20)
+                   (make-report-frame 20 3 25 15))))
+      ((keyp event #\M :c)
+       (reset)
+       (setf (frames fm)
+             (list (make-noise-frame 2
+                                     2
+                                     (rows *console*)
+                                     (cols *console*)))))
+      ((keyp event #\U :c)
+       (if (active fm)
+           (setf (active fm) nil)
+           (alexandria:when-let ((frs (frames fm)))
+             (setf (active fm) (alexandria:random-elt frs)))))))
+#+END_SRC
+
+We want to have window decorations. On a terminal space is limited and
+each character is precious, so we'll draw decorations only on the
+right border of the frame. Desired behavior is as follows:
+
+- press "x" to close the frame
+- press "o" to maximize the frame ("v" to reverse)
+- press ">" to minimize the frame ("<" to reverse)
+- drag " " to move the frame
+- drag "/" to resize the frame
+- when frame output exceeds the frame size, add the scroll bars
+
+#+BEGIN_SRC lisp
+  (defun render-window (frame)
+    (destructuring-bind (wr1 wc1 wr2 wc2) (fsz frame)
+      (declare (ignore wc1))
+      (ctl (:bgc #x11 #x11 #x11)
+           (:fgc #xbb #xbb #xbb))
+      (let ((col (1+ wc2)))
+        (out (:row wr1 :col col :fgc '(#xff #x22 #x44)) "x")
+        (out (:row (+ wr1 1) :col col) "o")
+        (out (:row (+ wr1 2) :col col) ">")
+        (loop for row from (+ wr1 3) upto wr2
+              do (out (:row row :col col) " "))
+        (out (:row (- wr2 0) :col col) "/"))
+      (ctl (:bgc #x22 #x22 #x22)
+           (:fgc #xbb #xbb #xbb))
+      (render-frame frame)))
+
+  (defun display-screen (fm)
+    (alexandria:if-let ((frame (active fm)))
+      (render-window frame)
+      (dolist (frame (frames fm))
+        (render-window frame))))
+#+END_SRC
+
+Now press C-n to see a few frames and press C-m to see our baseline
+example. That shoud help us with testing in the next section.
+
+                   for c.g = (alexandria:random-elt '(#x44 #x44 #x44 #x44 #x66))
+                   do (out (:row row
+                            :col col
+                            :bgc `(0 0 0)
+                            :fgc (list #x00 c.g #x44))
+                           (alexandria:random-elt '("+" "-"))))))
+
+  (defun user-action ()
+    #|plops|#)
+#+END_SRC
+
+Don't forget to update the system definition:
+
+#+BEGIN_SRC lisp
+  (defsystem "eu.turtleware.charming-clim"
+    #| ... |#
+    :components (#| ... |#
+                 (:file "examples")))
+#+END_SRC
+
+When we run the example we'll notice, that on 80x24 area we render a
+frame with a very the unimpressive speed 14fps. We will rectify that
+in the next chapter, right now we will focus on extending examples. We
+will allow creating multiple frames with various dimensions.
+

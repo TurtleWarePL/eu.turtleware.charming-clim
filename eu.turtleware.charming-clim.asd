@@ -29,4 +29,5 @@
   :depends-on (#:alexandria #:cffi #:swank #:bordeaux-threads)
   :components ((:static-file "tutorial.org")
                (:cfile "raw-mode")
-               (:file "terminal")))
+               (:file "terminal")
+               (:file "examples")))
