@@ -11,8 +11,8 @@ capabilities that we need:
 * Configuring the terminal
 
 To know where the terminal is, we need to start the implementation
-from a console and save streams in separate variables, because
-typically SWANK rebinds them.
+from it and save the streams in a separate variable, because SWANK
+rebind them for the SLIME session.
 
 #+BEGIN_SRC common-lisp
 (defvar *console-io* *terminal-io*)
@@ -22,8 +22,8 @@ typically SWANK rebinds them.
 
 Most things may be implemented with ANSI escape sequences and various
 extensions to them. Unfortunately we can't turn off echo and line
-buffering from this level. We will use a minimal C program to do that,
-which we will call with FFI.
+buffering from that way, we need to use a minimal C program to do
+that, which we will call with FFI.
 
 #+BEGIN_SRC c
   /* This small program is written based on a tutorial found under URL:
@@ -52,10 +52,11 @@ which we will call with FFI.
   }
 #+END_SRC
 
-And here's how we will use it. Loading the C file will be performed by
-ASDF, but you may always compile and load it manually. To allow
-interactive recompilation we'll use a function ~show-screen~ which
-will be called each second.
+And here's how we will use it. Compiling the C file and loading the
+resulting shared library will be performed by ASDF but instructions
+how to do it manually are included in a comment. To allow interactive
+programming we'll use a function ~show-screen~ which will be called
+each second.
 
 #+BEGIN_SRC common-lisp
   (defpackage #:eu.turtleware.charming-clim
@@ -133,25 +134,28 @@ directory will have a flat structure with the ASDF definition file
                  (:file "terminal")))
 #+END_SRC
 
-Now it is enough to load a system "eu.turtleware.charming-clim" in a
-terminal (not in Emacs!), and call
-~(eu.turtleware.charming-clim::start-display)~ to see on the screen a
-string "Hello World!". Now connect to a swank server and let the
-hacking commence.
+Now it is enough to load the system ~eu.turtleware.charming-clim~ in a
+terminal (not in Emacs!), and call the function ~start-display~ to see
+on the screen a string "Hello World!". Now connect to a swank server
+and let the hacking begin!
+
+#+CAPTION: Hello world application in action.
+#+NAME:   fig:hello-world
+[[./static/hello-world.webm]]
 
 * Escape sequences
 
-We will control the terminal by using escape sequences from the ANSI
-ECMA-48 standard with some useful extensions. To understand better how
-escape sequences work you may refer to the following:
+We will control the terminal by using ANSI escape sequences and with
+some few extensions to receive the pointer evetns. To understand
+better how escape sequences work you may read into the following:articles:
 
 - wikipedia article :: https://en.wikipedia.org/wiki/ANSI_escape_code
 - control sequences :: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
 - standard ecma-48  :: https://www.ecma-international.org/publications/standards/Ecma-048.htm
 
-Escape sequences are often chained and accept parameters. Numbers are
-encoded with characters with delimiters. Character case matters. Let's
-define a few utilities.
+Escape sequences usually start with the control sequence introducer
+and may accept parameters. Numbers are encoded with digit characters
+with delimiters. Character case matters. Let's define a few utilities.
 
 #+BEGIN_SRC common-lisp
   (defun put (&rest args)
@@ -203,18 +207,18 @@ the terminal is controlled. We'll add more functions when we need them.
     (sgr "48;2;" r ";" g ";" b))
 
   (defun save-cursor-position ()
-    (send-control (csi "s")))
+    (csi "s"))
 
   (defun restore-cursor-position ()
-    (send-control (csi "u")))
+    (csi "u"))
 
   (defun set-cursor-position (row col)
     (cond ((and row col)
-           (send-control (csi row ";" col "H")))
-          ((not (null n))
-           (send-control (csi row ";H")))
-          ((not (null m))
-           (send-control (csi ";" col "H")))))
+           (csi row ";" col "H"))
+          ((not (null col))
+           (csi row ";H"))
+          ((not (null row))
+           (csi ";" col "H"))))
 
   (defmacro with-cursor-position ((row col) &body body)
     `(progn
@@ -241,7 +245,7 @@ addressed with a coordinate [1, 1].
   (reset-console)
   (setf (cursor-visibility) nil)
   (set-background-color #x00 #x22 #x22)
-  (set-foreground-color #xff #xa0 #xa0)
+  (set-foreground-color #xff #x22 #x22)
 
   (declaim (notinline show-screen))
   (defun show-screen ()
@@ -258,8 +262,14 @@ addressed with a coordinate [1, 1].
       (put str)))
 #+END_SRC
 
+#+CAPTION: Red "Hello World!" moving on the screen.
+#+NAME:   fig:hello-world-2
+[[./static/hello-world-move-color.webm]]
+
 Now we'll improve the loop in ~start-display~ so it is possible to
-modify the configuration easily.
+modify the configuration easily. This step will require restarting the
+application because we modify the entry point (and there is no
+mechanism to swap it interactively).
 
 #+BEGIN_SRC lisp
   (defun show-screen ()
