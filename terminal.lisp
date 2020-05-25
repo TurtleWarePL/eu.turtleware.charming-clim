@@ -13,18 +13,11 @@
     :void
   (handler :pointer))
 
-(cffi:defcfun (enable-sigwinch "enable_sigwinch")
-    :pointer
-  (callback :pointer))
-
-(cffi:defcfun (disable-sigwinch "disable_sigwinch")
-    :void
-  (handler :pointer))
-
-(cffi:defcallback sigwinch :void
-    ((signum :int))
-  (declare (ignore signum))
-  (update-console-dimensions))
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defconstant +delete+ (code-char #x7f)
+    "The DEL character (#\Rubout), last in the ASCII table.")
+  (defconstant +escape+ (code-char #x1b)
+    "The ESC character (#\esc)."))
 
 
 (defmacro letf (bindings &body body)
@@ -90,12 +83,6 @@
                                                             ,(cdr args)))))))))
 
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (defconstant +delete+ (code-char #x7f)
-    "The DEL character (#\Rubout), last in the ASCII table.")
-  (defconstant +escape+ (code-char #x1b)
-    "The ESC character (#\esc)."))
-
 (defun put (&rest args)
   "Put raw string on a console"
   (format *console-io* "~{~a~}" args)
@@ -391,18 +378,14 @@ Returns a generalized boolean (when true returns a gesture)."
 
 (defvar *console*)
 (defvar *console-io*)
-(defvar *console-dirty-p* t)
 
 (defun init-console ()
-  (prog1 (list (enable-raw)
-               (enable-sigwinch (cffi:callback sigwinch)))
+  (prog1 (enable-raw)
     (reset-console)))
 
 (defun close-console (handler)
   (reset-console)
-  (destructuring-bind (termios sigaction) handler
-    (disable-sigwinch sigaction)
-    (disable-raw termios)))
+  (disable-raw handler))
 
 (defun get-cursor-position ()
   (request-cursor-position)
@@ -411,16 +394,13 @@ Returns a generalized boolean (when true returns a gesture)."
       (values (row c) (col c)))))
 
 (defun update-console-dimensions ()
-  (if (boundp '*console*)
-      (with-cursor-position ((expt 2 16) (expt 2 16))
-        (multiple-value-bind (rows cols)
-            (get-cursor-position)
-          (setf (rows *console*) rows
-                (cols *console*) cols
-                *row2* (list rows)
-                *col2* (list cols))
-          (setf *console-dirty-p* nil)))
-      (setf *console-dirty-p* t)))
+  (with-cursor-position ((expt 2 16) (expt 2 16))
+    (multiple-value-bind (rows cols)
+        (get-cursor-position)
+      (setf (rows *console*) rows)
+      (setf (cols *console*) cols)
+      (setf *row2* (list rows))
+      (setf *col2* (list cols)))))
 
 (defclass console ()
   ((ios :initarg :ios :accessor ios :documentation "Console I/O stream.")
@@ -477,15 +457,8 @@ Returns a generalized boolean (when true returns a gesture)."
                          &key ios fgc bgc cvp fps &allow-other-keys)
                         &body body)
   (declare (ignore fgc bgc cvp fps))
-  `(let ((proc (bt:make-thread
-                (lambda ()
-                  (handler-case
-                      (let* ((*console-io* ,ios)
-                             (*console* (make-instance 'console ,@args)))
-                        (unwind-protect (progn ,@body)
-                          (close-console (hnd *console*))))
-                    (serious-condition (c)
-                      (format t "Exit due to~%~a~%" c)
-                      (cl-user::quit)))))))
-     (bt:join-thread proc)))
+  `(let* ((*console-io* ,ios)
+          (*console* (make-instance 'console ,@args)))
+     (unwind-protect (progn ,@body)
+       (close-console (hnd *console*)))))
 
