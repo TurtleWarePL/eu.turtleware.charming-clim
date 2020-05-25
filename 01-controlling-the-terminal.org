@@ -268,10 +268,17 @@ addressed with a coordinate [1, 1].
 
 Now we'll improve the loop in ~start-display~ so it is possible to
 modify the configuration easily. This step will require restarting the
-application because we modify the entry point (and there is no
-mechanism to swap it interactively).
+application because we modify the entry point.
 
 #+BEGIN_SRC lisp
+  (defmacro with-console (opts &body body)
+    (declare (ignore opts))
+    (let ((handler (gensym)))
+      `(let ((,handler (enable-raw)))
+         (unwind-protect (progn ,@body)
+           (disable-raw ,handler)
+           (reset-console)))))
+
   (defun show-screen ()
     (set-cursor-position (1+ (random 24))
                          (1+ (random 80)))
@@ -286,29 +293,39 @@ mechanism to swap it interactively).
           :background '(#x00 #x22 #x22)))
 
   (defun start-display ()
-    (swank:create-server)
-    (with-console ()
-      (loop with conf
-            with seconds
-            do (unless (equalp conf *conf*)
-                 (setf conf (copy-list *conf*))
-                 (destructuring-bind (&key sleep cursorp foreground background)
-                     conf
-                   (setf seconds sleep)
-                   (reset-console)
-                   (setf (cursor-visibility) (getf conf :cursorp))
-                   (apply #'set-background-color background)
-                   (apply #'set-foreground-color foreground)
-                   (clear-console)))
-               (sleep seconds)
-               (show-screen))))
+    (ignore-errors (swank:create-server))
+    (loop
+      (with-simple-restart (run-again "Run again")
+        (with-console () (display-loop)))))
+
+  (defun display-loop ()
+    (loop with conf
+          with seconds
+          do (unless (equalp conf *conf*)
+               (setf conf (copy-list *conf*))
+               (destructuring-bind (&key sleep cursorp
+                                         foreground background)
+                   conf
+                 (setf seconds sleep)
+                 (reset-console)
+                 (setf (cursor-visibility) (getf conf :cursorp))
+                 (apply #'set-background-color foreground)
+                 (apply #'set-foreground-color background)
+                 (clear-console)))
+             (sleep seconds)
+             (show-screen)))
 #+END_SRC
 
-* Reading input
+#+CAPTION: Noise
+#+NAME:   fig:noise
+[[./static/noise.webm]]
 
-We've configured the terminal to accept data in a raw mode. Despite
-that we can only read translated sequences, there is no portable way
-to access raw keycode press and release events. That is unfortunate.
+* Reading the input
+
+We've configured the terminal to accept data in raw mode. Despite that
+we can only read input as it is provided by the display server, there
+is no portable way to access raw keycode press and release events.
+That is unfortunate.
 
 There are two characters which have a special meaning. ~ESC~ starts
 the escape sequence and ~DEL~ is not a graphical character (despite
@@ -345,31 +362,10 @@ one of the following situations:
 #+END_SRC
 
 We will use ~read-char-no-hang~ to avoid blocking. ~read-input~ will
-return either NIL (for no available input), a graphical character, a
+return either ~nil~ (for no available input), a graphical character, a
 keyword for known keys which are not graphical, or a gesture object if
 there are modifiers present (or a non-graphical character appears
-which has no known keyword representation).
-
-#+BEGIN_SRC lisp
-  (defclass gesture ()
-    ((key  :initarg :key  :accessor gesture-key)
-     (mods :initarg :mods :accessor gesture-mods)))
-
-  (defmethod print-object ((o gesture) s)
-    (print-unreadable-object (o s :type nil :identity nil)
-      (let ((key (gesture-key o))
-            (mods (gesture-mods o)))
-        (format s "~s ~s"
-                key
-                (loop for p in (list +c1-mod+
-                                     +meta-mod+
-                                     +ctrl-mod+
-                                     +alt-mod+
-                                     +shift-mod+)
-                      for k in '(:C1 :Meta :Ctrl :Alt :Shift)
-                      unless (zerop (logand mods p))
-                        collect k)))))
-#+END_SRC
+which doesn't have a keyword equivalent).
 
 We may encounter four types of input: control characters (from C0 and
 C1 group), escape sequences, delete character and other alphanumerical
@@ -407,10 +403,9 @@ character, a keyword or a gesture (or null when there's no input).
                         collect k)))))
 #+END_SRC
 
-~deletep~ and ~controlp~ are easy. In case of a control we return a
-canonical form with a modifier and the character from the third column
-of the ASCII table ~[@A-Z\[\\]^_]~. It is worth noting, that controls
-from C1 group are not ASCII characters.
+Implementing functions ~deletep~ and ~controlp~ is easy. In a case of
+the control character we return its canonical form with a modifier.
+It is worth noting, that C1 group is not part of ASCII characters.
 
 #+BEGIN_SRC lisp
 (defun control-char-p (ch &aux (code (char-code ch)))
@@ -436,10 +431,10 @@ Returns a generalized boolean (when true returns a gesture)."
 
 Parsing an escape sequence requires more code. Exact sequence format
 for special keys vary between terminal emulators. On top of that some
-sequences are ambiguous. We are going to focus on the most widespread
-ones defined by xterm, which should be compatible with most
-emulators. When the escape character is read and there is no futher
-input, we return ~:escape~.  Otherwise we try to parse the sequence.
+sequences are ambiguous. We are going to focus on the most popular
+ones which should be compatible with most emulators. When the escape
+character is read and there is no futher input, we return ~:escape~.
+Otherwise we try to parse the sequence.
 
 #+BEGIN_SRC lisp
   (defun escapep (ch)
@@ -454,7 +449,7 @@ input, we return ~:escape~.  Otherwise we try to parse the sequence.
 #+END_SRC
 
 When we parse the escape sequence there are few possibilities. For
-instance ~ESC [~ is known as ~Control Sequence Introducer~, some
+instance ~ESC [~ is known as the ~Control Sequence Introducer~, some
 terminals produce ~ESC <char>~ when we press Alt+<char> etc. Here is
 the approach we are going to take:
 
@@ -489,27 +484,27 @@ like this: ~ESC GROUP-CHAR (NUM1) (';' NUM2) TERMINATING-CHAR~.
 #+END_SRC
 
 We want to be able to define new escape sequences when needed, so we
-will create a small macro responsible for registering new
-sequences. It will dispatch to the appropriate parser based on the
-group and the terminator character. The function accepts two numeric
-arguments.
+will create a small macro responsible for registering new ones. It
+will use the appropriate parser based on the group and the terminator
+character. The function accepts two numeric arguments.
 
 #+BEGIN_SRC lisp
-  (defvar *key-resolvers* (make-hash-table))
+  (eval-when (:compile-toplevel :load-toplevel  :execute)
+    (defvar *key-resolvers* (make-hash-table)))
 
   (defmacro define-key-resolver (group terminator (num1 num2) &body body)
     `(setf (gethash ,(+ (char-code terminator)
                         (ash (char-code group) 8))
-                    ,*key-resolvers*)
+                    (progn *key-resolvers*))
            (lambda (,num1 ,num2)
              (declare (ignorable ,num1 ,num2))
              ,@body)))
 #+END_SRC
 
 Some escape sequences are used to encode keys. In that case the second
-number represents modifiers. When it is decremented by one then it is
-a modifier bit-field. We also need to account for control
-characters. This is wrapped as a single utility called ~maybe-combo~:
+number represents the key modifiers. When it is decremented by one,
+then it is a modifier bit-field. We also need to account for control
+characters. This is implemented in the utility called ~maybe-combo~:
 
 #+BEGIN_SRC lisp
   (defun maybe-combo (key num2)
@@ -546,11 +541,11 @@ group and from the ~SS3~):
   (define-key-resolver #\O #\S (num1 num2) (maybe-combo :f4 num2))
 #+END_SRC
 
-And, finally, the ~resolve-key~ function which is called by
-~escapep~. When the read is incomplete, then it assumes that a
-combination ALT+<char>, otherwise it calls the key resolver. If there
-is no defined resolver for the sequence we create an unknown gesture
-which may be inspected for the actual characters typed.
+And, finally, the function ~resolve-key~ which is called by
+~escapep~. When the read is incomplete, then it assumes a combination
+Alt+<char>, otherwise it calls the key resolver. If there is no
+defined resolver for the sequence we create an "unknown" gesture which
+may be inspected to learn the typed combination escape sequence.
 
 #+BEGIN_SRC lisp
   (defun resolve-key (group num1 num2 |Hasta la vista, baby|)
@@ -577,9 +572,9 @@ which may be inspected for the actual characters typed.
 
 With that all what is left is the test code, which will print read
 characters on the terminal, so we can verify if they are properly
-recognized. Notice, that we do not clear whole line, only the reminder
-of it after printing the sequence, to avoid unnecessary flicker. Some
-key combinations may be intercepted by the window manager.
+recognized. Notice, that we do not clear whole line after printing the
+sequence (only the reminder of it) to avoid unnecessary flicker. Some
+key combinations like Alt+F4 may be intercepted by the window manager.
 
 #+BEGIN_SRC lisp
 (let ((characters nil))
@@ -611,18 +606,20 @@ parameter. This is to allow mapping the key ALT to META.
         (setf +alt-mod+ +alt-mod*+)))
 #+END_SRC
 
+#+CAPTION: Parsing input
+#+NAME:   fig:parsing-input
+[[./static/parsing-input.webm]]
+
 * Civilizing the interface
 
 We can do quite a lot already. Our previous demo, despite being pretty
 basic, proves that. We want to add some interactive behavior to the
-application, so we may assign actions to the key combinations. But
-first we'll refactor our abstraction so there are no dangling global
-variables around.
-
-We also isolate the low-level terminal access in ~init-console~ and
-~close-console~ functions, so we can treat the handler as an opaque
+application and assign actions to some key combinations. First though
+we'll refactor our abstraction so there is less global state. We will
+also isolate the low-level terminal access in ~init-console~ and
+~close-console~ functions, so we may treat the handler as an opaque
 object. We retain the variable ~*console-io*~, but we bind it only in
-the console context. We also bind a variable ~*console*~.
+the console context. We also bind there a variable ~*console*~.
 
 #+BEGIN_SRC lisp
   (defun init-console ()
@@ -630,8 +627,8 @@ the console context. We also bind a variable ~*console*~.
       (reset-console)))
 
   (defun close-console (handler)
-    (reset-console)
-    (disable-raw handler))
+    (disable-raw handler)
+    (reset-console))
 
   (defvar *console*)
   (defvar *console-io*)
@@ -670,11 +667,16 @@ the console context. We also bind a variable ~*console*~.
          (close-console (hnd *console*)))))
 
   (defun start-display ()
-    (swank:create-server)
-    (with-console (:ios *terminal-io*)
-      (clear-console)
-      (loop (sleep (/ (fps *console*)))
-            (show-screen))))
+    (ignore-errors (swank:create-server))
+    (loop
+      (with-simple-restart (run-again "Run again")
+        (with-console (:ios *terminal-io*)
+          (display-loop)))))
+
+  (defun display-loop ()
+    (clear-console)
+    (loop (sleep (/ (fps *console*)))
+          (show-screen)))
 #+END_SRC
 
 To add some interactive behavior we want to assign actions to keys.
@@ -789,7 +791,7 @@ invoking the operator.
                                           (lambda (row col)
                                             (and (funcall ,fun row col)
                                                  (funcall old row col))))
-                                        ,*fun*)))))
+                                        (progn *fun*))))))
        ,@body))
 
   (defmacro letf (bindings &body body)
@@ -850,8 +852,15 @@ the operator ~ctl~.
                                                               ,(cdr args)))))))))
 #+END_SRC
 
-Time to use our new tools to implement the show-screen and the user
-function:
+Time to use our new tools to a new version of the function
+~show-screen~ and the function ~user-action~. In ~show-screen~ we
+define a local function ~ll~ which is a predicate responsible for
+clipping output to the lambda shape. In the first clipping body we
+limit drawing to said ad-hoc lambda and clip out the first and the
+last row for aesthetic reasons. The second body in ~with-clipping~
+does the opposite: draws everywhere in the drawing plane _except_ for
+the lambda drawing. Finally we implement a user action which clears
+part of the drawing area. To invoke it press C-u.
 
 #+BEGIN_SRC lisp
   (defun show-screen ()
@@ -915,6 +924,11 @@ this problem.
      #|...|#))
 #+END_SRC
 
+#+CAPTION: Lambda
+#+NAME:   fig:lambda
+[[./static/lambda.webm]]
+
+
 * Determining the terminal dimensions
 
 Time to learn how to determine the terminal size. We already know how
@@ -931,6 +945,10 @@ we are going to determine the terminal size.
     (with-cursor-position (10 3)
       (request-cursor-position)))
 #+END_SRC
+
+#+CAPTION: Cursor position escape sequence
+#+NAME:   fig:cursor-position
+[[./static/cursor-position.webm]]
 
 When we execute the user command by pressing C-u our program will tell
 us, that an unknown sequence has been read: ~ESC [ 10 3 R~. Indeed,
@@ -950,19 +968,19 @@ the sequence is read a condition is signaled and a gesture is returned.
                    :mods 0))
 #+END_SRC
 
-We will use it to print a character on the right-bottom-most cell to
-see if it works. An important bit of information is that if we set the
-cursor beyond the terminal, it will be positioned over the last cell
-instead, so if we request the position back we should receive a total
-number of rows and columns of the console.
+We will use it to print a character on the right bottom cell to see if
+it works. An important bit of information is that if we set the cursor
+beyond the terminal, it will be positioned over the last cell instead,
+so if we request the position back, we should receive a total number
+of rows and columns of the terminal.
 
-To do that we'll add slots to a class representing the console and add
-a handler-case above read-input which assigns these slots. Moreover we
+To do that we'll add slots to the class ~console~ and add a handler
+above the ~read-input~ which will assign these slots. Moreover we will
 modify the ~user-action~ to request the cursor position after setting
-it to some unreasonably big value. Now when we press C-u the character
-should appear on the bottom-right corner of the terminal. Notice, that
-we also update the clipping area (*row2* and *col2*). Otherwise our
-character could have been filtered.
+it a big value. Now when we press C-u, the character should appear on
+the bottom-right corner of the terminal. Notice, that we also update
+the clipping area (*row2* and *col2*). Otherwise the character would
+have been filtered.
 
 #+BEGIN_SRC lisp
   (defclass console ()
@@ -976,11 +994,11 @@ character could have been filtered.
                      (cursor-position-report (c)
                        (let ((row (row c))
                              (col (col c)))
-                         (setf *row2* (list row)
-                               ,*col2* (list col)
-                               (rows *console*) row
-                               (cols *console*) col))
-                       nil))
+                         (setf *row2* (list row))
+                         (setf *col2* (list col))
+                         (setf (rows *console*) row)
+                         (setf (cols *console*) col)))
+                       nil)
           #|...|#)
     #|...|#
     (out (:row (rows *console*)
@@ -992,20 +1010,26 @@ character could have been filtered.
       (request-cursor-position)))
 #+END_SRC
 
+#+CAPTION: Resizing hacks
+#+NAME:   fig:resizing
+[[./static/resizing.webm]]
+
 We are left with a few problems:
 
 - old markers don't disappear unless we reset the whole console
 - any cursor position request will end up in resizing of the console
-- some terminals emit ambiguous sequence ~ESC [ 1 2 R~ for S-F3
 - console is not resized automatically when the terminal is resized
 
+We could have incorporated installing a signal handler for t
+
 For now we will tackle only the issue of resizing the console when the
-terminal window is resized. The other three will be addressed in the
-last section. When the terminal window is changed the system sends a
-signal SIGWINCH. We want to handle it, so we are going to extend our
-~raw_mode.c~ program.
+terminal window is resized. When the terminal window is changed, the
+system sends the signal SIGWINCH. We want to handle it, so we are
+going to extend our ~raw_mode.c~ program.
 
 #+BEGIN_SRC c
+  #include <signal.h>
+
   struct sigaction *enable_sigwinch(void(*catch_function)(int)) {
     struct sigaction *old_action = malloc(sizeof(struct sigaction));
     struct sigaction new_action;
@@ -1022,7 +1046,7 @@ signal SIGWINCH. We want to handle it, so we are going to extend our
   }
 #+END_SRC
 
-And a glue code for Lisp:
+And add the glue code for Lisp:
 
 #+BEGIN_SRC lisp
   (cffi:defcfun (enable-sigwinch "enable_sigwinch")
@@ -1060,17 +1084,16 @@ interrupt handler.
         (with-cursor-position ((expt 2 16) (expt 2 16))
           (multiple-value-bind (rows cols)
               (get-cursor-position)
-            (setf (rows *console*) rows
-                  (cols *console*) cols
-                  ,*row2* (list rows)
-                  ,*col2* (list cols))
+            (setf (rows *console*) rows)
+            (setf (cols *console*) cols)
+            (setf *row2* (list rows))
+            (setf *col2* (list cols))
             (setf *console-dirty-p* nil)))
         (setf *console-dirty-p* t)))
 #+END_SRC
 
-Time to modify init-console and close-console to call our new
-functions. Moreover we should query the terminal size when a console
-is created.
+Time to modify functions ~init-console~ and ~close-console~. Moreover
+we should query the terminal size when a console is created.
 
 #+BEGIN_SRC lisp
   (defun init-console ()
@@ -1098,8 +1121,8 @@ is created.
 There is still a problem with this code. We call functions writing and
 reading from the terminal, and at any time we may receive an interrupt
 (which will put us in a debugger). We are going to run the console
-loop in a separate thread (add bordeaux-threads to the ASD file now),
-so the main thread may be safely interrupted.
+loop in a separate thread (add bordeaux-threads to the ASD file and
+load the library now), so the main thread may be safely interrupted.
 
 #+BEGIN_SRC lisp
   (defmacro with-console ((&rest args
@@ -1114,8 +1137,7 @@ so the main thread may be safely interrupted.
                           (unwind-protect (progn ,@body)
                             (close-console (hnd *console*))))
                       (serious-condition (c)
-                        (format t "Exit due to~%~a~%" c)
-                        (cl-user::quit)))))))
+                        (format t "Exit due to~%~a~%" c)))))))
        (bt:join-thread proc)))
 #+END_SRC
 
@@ -1128,13 +1150,19 @@ terminal dimensions. It is part of the application logic.
     (with-console (:ios *terminal-io*)
       (clear-console)
       (loop (sleep (/ (fps *console*)))
-            (when *console-dirty-p*
+      (when *console-dirty-p*
               (update-console-dimensions))
             (show-screen))))
 #+END_SRC
 
 Now when we resize the terminal the marker is printed in the
-appropriate location right away.
+appropriate location right away. If the terminal seems to get stuck
+during start of this application version, make sure you have defined
+the key resolver for the cursor position report.
+
+#+CAPTION: Resizing with sigwinch
+#+NAME:   fig:resizing2
+[[./static/resizing2.webm]]
 
 * Adding a mouse tracking support
 
