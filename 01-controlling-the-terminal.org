@@ -1,12 +1,14 @@
 #+title: Charming CLIM tutorial part 1 – controlling the terminal
 #+author: Daniel 'jackdaniel' Kochmański
+#+email: daniel@turtleware.eu
+#+hugo_base_dir: ~/hugo/
 
 When building a console backend for McCLIM there are three terminal
 capabilities that we need:
 
 - configuring the terminal (raw mode, no echo, querying properties)
-- drawing output (positioning cursor and writing with attributes)
-- reading events (keyboard, pointer and window status changes)
+- drawing output (positioning the cursor and writing with attributes)
+- reading events (keyboard, pointer, and window status changes)
 
 * Configuring the terminal
 
@@ -20,7 +22,7 @@ rebind them for the SLIME session.
 (loop (sleep most-positive-fixnum))
 #+END_SRC
 
-Most things may be implemented with ANSI escape sequences and various
+We can implement most things with ANSI escape sequences and various
 extensions to them. Unfortunately we can't turn off echo and line
 buffering from that way, we need to use a minimal C program to do
 that, which we will call with FFI.
@@ -52,11 +54,9 @@ that, which we will call with FFI.
   }
 #+END_SRC
 
-And here's how we will use it. Compiling the C file and loading the
-resulting shared library will be performed by ASDF but instructions
-how to do it manually are included in a comment. To allow interactive
-programming we'll use a function ~show-screen~ which will be called
-each second.
+And here's how we will use it. ASDF will compile the C file and load
+the resulting shared library. To allow interactive programming we'll
+use a function ~show-screen~ and call it once per second.
 
 #+BEGIN_SRC common-lisp
   (defpackage #:eu.turtleware.charming-clim
@@ -146,8 +146,8 @@ and let the hacking begin!
 * Escape sequences
 
 We will control the terminal by using ANSI escape sequences and with
-some few extensions to receive the pointer evetns. To understand
-better how escape sequences work you may read into the following:articles:
+some few extensions to receive the pointer events. To understand
+better how escape sequences work you may read into the following:
 
 - wikipedia article :: https://en.wikipedia.org/wiki/ANSI_escape_code
 - control sequences :: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
@@ -176,7 +176,7 @@ with delimiters. Character case matters. Let's define a few utilities.
     (apply #'csi (append args '("m"))))
 #+END_SRC
 
-Time to add a high level interface. These few functions illustrate how
+Time to add a high-level interface. These few functions illustrate how
 the terminal is controlled. We'll add more functions when we need them.
 
 #+BEGIN_SRC lisp
@@ -235,7 +235,7 @@ the terminal is controlled. We'll add more functions when we need them.
 
 Time to something more fun. Typing the following in a REPL while the
 terminal is open gives the most satisfying result. The example below
-shows an important property of the terminal: first character is
+shows an important property of the terminal: the first character is
 addressed with a coordinate [1, 1].
 
 #+BEGIN_SRC lisp
@@ -266,9 +266,9 @@ addressed with a coordinate [1, 1].
 #+NAME:   fig:hello-world-2
 [[./static/hello-world-move-color.webm]]
 
-Now we'll improve the loop in ~start-display~ so it is possible to
-modify the configuration easily. This step will require restarting the
-application because we modify the entry point.
+Now we'll improve the loop in ~start-display~ to easily modify the
+configuration. This step will require restarting the application
+because we modify the entry point.
 
 #+BEGIN_SRC lisp
   (defmacro with-console (opts &body body)
@@ -309,8 +309,8 @@ application because we modify the entry point.
                  (setf seconds sleep)
                  (reset-console)
                  (setf (cursor-visibility) (getf conf :cursorp))
-                 (apply #'set-background-color foreground)
-                 (apply #'set-foreground-color background)
+                 (apply #'set-background-color background)
+                 (apply #'set-foreground-color foreground)
                  (clear-console)))
              (sleep seconds)
              (show-screen)))
@@ -327,9 +327,9 @@ we can only read input as it is provided by the display server, there
 is no portable way to access raw keycode press and release events.
 That is unfortunate.
 
-There are two characters which have a special meaning. ~ESC~ starts
-the escape sequence and ~DEL~ is not a graphical character (despite
-not being a control characters). We will signify their uniqueness by
+There are two characters that have a special meaning. ~ESC~ starts the
+escape sequence and ~DEL~ is not a graphical character (despite not
+being a control character). We will signify their uniqueness by
 defining appropriate constants.
 
 #+BEGIN_SRC lisp
@@ -358,7 +358,8 @@ one of the following situations:
           ((deletep ch))
           ((escapep ch))
           ((controlp ch))
-          (t (error "Unknown input sequence, char code 0x~x~%." (char-code ch)))))
+          (t (error "Unknown input sequence, char code 0x~x~%."
+                    (char-code ch)))))
 #+END_SRC
 
 We will use ~read-char-no-hang~ to avoid blocking. ~read-input~ will
@@ -368,11 +369,11 @@ there are modifiers present (or a non-graphical character appears
 which doesn't have a keyword equivalent).
 
 We may encounter four types of input: control characters (from C0 and
-C1 group), escape sequences, delete character and other alphanumerical
+C1 group), escape sequences, ~delete~ and other alphanumerical
 characters. Control sequence and other modifiers like Alt must be
-encoded, so we will define a simple class representing a gesture.
-Character which is read from the terminal will be always either a
-character, a keyword or a gesture (or null when there's no input).
+encoded, so we will define a simple class representing a gesture. The
+character which is read from the terminal will be always either a
+character, a keyword, or a gesture (or null when there's no input).
 
 #+BEGIN_SRC lisp
   (eval-when (:compile-toplevel :load-toplevel :execute)
@@ -429,12 +430,12 @@ Returns a generalized boolean (when true returns a gesture)."
     :delete))
 #+END_SRC
 
-Parsing an escape sequence requires more code. Exact sequence format
-for special keys vary between terminal emulators. On top of that some
-sequences are ambiguous. We are going to focus on the most popular
-ones which should be compatible with most emulators. When the escape
-character is read and there is no futher input, we return ~:escape~.
-Otherwise we try to parse the sequence.
+Parsing an escape sequence requires more code. The exact sequence
+format for special keys varies between terminal emulators. On top of
+that some sequences are ambiguous. We are going to focus on the most
+popular ones which should be compatible with most emulators. When the
+escape character is read and there is no further input, we return the
+keyword ~:escape~. Otherwise we try to parse the sequence.
 
 #+BEGIN_SRC lisp
   (defun escapep (ch)
@@ -544,8 +545,8 @@ group and from the ~SS3~):
 And, finally, the function ~resolve-key~ which is called by
 ~escapep~. When the read is incomplete, then it assumes a combination
 Alt+<char>, otherwise it calls the key resolver. If there is no
-defined resolver for the sequence we create an "unknown" gesture which
-may be inspected to learn the typed combination escape sequence.
+defined resolver for a sequence we create an "unknown" gesture, which
+may be inspected to learn the reported escape sequence.
 
 #+BEGIN_SRC lisp
   (defun resolve-key (group num1 num2 |Hasta la vista, baby|)
@@ -570,11 +571,12 @@ may be inspected to learn the typed combination escape sequence.
                  num1 num2)))
 #+END_SRC
 
-With that all what is left is the test code, which will print read
-characters on the terminal, so we can verify if they are properly
-recognized. Notice, that we do not clear whole line after printing the
-sequence (only the reminder of it) to avoid unnecessary flicker. Some
-key combinations like Alt+F4 may be intercepted by the window manager.
+With all that in place, all what is left is the test code. It will
+print characters which are on the terminal, so we can verify if they
+are properly recognized. Notice, that we do not clear a whole line
+after printing the sequence (only the reminder of it) to avoid
+unnecessary flicker. Some key combinations like Alt+F4 may be
+intercepted by the window manager.
 
 #+BEGIN_SRC lisp
 (let ((characters nil))
@@ -680,7 +682,7 @@ the console context. We also bind there a variable ~*console*~.
 #+END_SRC
 
 To add some interactive behavior we want to assign actions to keys.
-We'll define a predicate which decides whether a key matches given
+We'll define a predicate deciding whether a key matches supplied
 parameters.
 
 #+BEGIN_SRC lisp
@@ -733,11 +735,11 @@ Now we will add three key combinations:
                (clear-line 0))))
 #+END_SRC
 
-Notice that, instead of a closure over a variable characters, we use
-the slot ~app~ in the ~*console*~ object. Function ~user-action~ may
-be defined from REPL – when C-u is pressed it will be executed. It may
-be used for instance to change the configuration. We still need to add
-appropriate methods which set the console on the configuration change.
+Notice that instead of a closure we use the slot ~app~. Function
+~user-action~ may be defined from REPL – when C-u is pressed it will
+be executed. It may be used for instance to change the
+configuration. We still need to add appropriate methods that set the
+console on the configuration change.
 
 #+BEGIN_SRC lisp
   (defmethod (setf fgc) :after (rgb (instance console))
@@ -768,7 +770,7 @@ This operation is known as clipping in graphics. We are going to
 implement a flexible mechanism based on dynamic variables. For simple
 clipping we provide min/max row/col, and for more complex use cases a
 custom predicate may be specified. The macro is called ~with-clipping~
-and may be nested to achieve intersection of the clipping areas.
+and may be nested to achieve the intersection of the clipping areas.
 
 The macro ~out~ allows specifying a row, a column, a foreground color
 and a background color. It respects clipping limitations by testing
@@ -952,7 +954,7 @@ we are going to determine the terminal size.
 
 When we execute the user command by pressing C-u our program will tell
 us, that an unknown sequence has been read: ~ESC [ 10 3 R~. Indeed,
-that's the sequence which is documented as a result. We will define a
+that's the sequence that is documented as a result. We will define a
 condition to signal, that the cursor-position-report has arrived. When
 the sequence is read a condition is signaled and a gesture is returned.
 
@@ -1010,18 +1012,14 @@ have been filtered.
       (request-cursor-position)))
 #+END_SRC
 
-#+CAPTION: Resizing hacks
-#+NAME:   fig:resizing
-[[./static/resizing.webm]]
-
 We are left with a few problems:
 
 - old markers don't disappear unless we reset the whole console
 - any cursor position request will end up in resizing of the console
-- console is not resized automatically when the terminal is resized
+- the console is not resized automatically
 
 We could have incorporated installing a signal handler for the
-~sigwinch~, but we'll settle on simpler solution which will be
+~sigwinch~, but we'll settle on a simpler solution which will be
 incorporated when we refactor the I/O model in the next post. For now
 we'll initialize the size when initializing the console and when
 resetting it.
@@ -1029,6 +1027,8 @@ resetting it.
 #+BEGIN_SRC lisp
   (defun get-cursor-position ()
     (request-cursor-position)
+    ;; If the appropriate key resolver is not defined, this will loop
+    ;; forever and the application will freeze.
     (handler-case (loop (read-input))
       (cursor-position-report (c)
         (values (row c) (col c)))))
@@ -1059,14 +1059,17 @@ resetting it.
     #| ... |#)
 #+END_SRC
 
+#+CAPTION: Resizing hacks
+#+NAME:   fig:resizing
+[[./static/resizing.webm]]
+
 * Adding a mouse tracking support
 
 Terminal emulators which are compatible with xterm allow tracking the
-mouse. There are few possible modes (i.e track only mouse clicks, or
-track everything, motion included), as well as a few schemes for
-reporting the event. We are interested in tracking all events and in
-extended report (because the "default" scheme has serious dimension
-limitations due to byte encoding).
+mouse. There are few possible modes (i.e track only mouse clicks), as
+well as a few schemes for reporting events. We are interested in
+tracking all events reported in the extended scheme (because the
+"default" scheme has serious limitations due to byte encoding).
 
 #+BEGIN_SRC lisp
   ;;; (csi ? tracking ; encoding h/l)
@@ -1184,7 +1187,7 @@ some terminals despite claiming that they are xterm-compatible, may
 behave differently. I.e on KDE's Konsole mouse motion is reported only
 when any mouse button is pressed.
 
-Finally it is time to integrate the pointer tracking in our ctl
+Finally, it is time to integrate the pointer tracking in our ctl
 interface and to the console class.
 
 #+BEGIN_SRC lisp
@@ -1209,3 +1212,50 @@ interface and to the console class.
 (defmethod (setf ptr) :after (ptr (instance console))
   (setf (mouse-tracking) (not (null ptr))))
 #+END_SRC
+
+Some terminal emulators bind the command "paste primary selection" to
+the middle button press action, so don't be surprised when they do.
+
+#+CAPTION: Mouse tracking
+#+NAME:   fig:mouse
+[[./static/mouse.webm]]
+
+* Conclusions
+
+This is the first part of a tutorial which is split in five:
+
+1. Controlling the terminal
+2. Rethinking the Input/Output
+3. Rendering on the console
+4. Rendering on the console (2)
+5. Writing a McCLIM backend
+
+In the second post we'll construct a frame manager with windows and
+animations as well as scrolling and other common abstractions. In the
+third one we'll go through state-of-the-art algorithms to be able to
+render lines, curves, and such. The fourth will extend concepts of the
+third one by adding styles and alpha blending. The fifth part will be
+a guide about how to write a backend for McCLIM.
+
+There will be three outcomes of this case study:
+
+- A standalone TUI toolkit independent of ncurses (and CLIM)
+- McCLIM backend for the terminal based on the above
+- Documentation for McCLIM on how to write new backends
+
+My main motivations were to make some rendering issues in McCLIM
+apparent by growing a pixel into something as big and non-square as a
+terminal cell and to have plenty of fun while hacking something
+amusing. The second goal is already achieved!
+
+#+CAPTION: WIP frame manager
+#+NAME:   fig:frame-manager
+[[./static/frame-manager.webm]]
+
+I'd like to thank Jānis Džeriņš, Michał Herda and Christoph Keßler for
+offering the help with this text review and providing useful hints.
+All mistakes are mine :-). Please don't hesitate to contact me with
+questions and remarks.
+
+If you feel like supporting me with my FLOSS contributions you may
+become my patron here https://www.patreon.com/jackdaniel_kochmanski.
