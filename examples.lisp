@@ -21,12 +21,12 @@
                  (list (make-noise-frame 4  2 12 20)
                        (make-noise-frame 6 12 14 30)
                        (make-animation-frame 4 36 10 78 20)
-                       (make-report-frame 20 3 25 15))))
+                       (make-report-frame 18 10 23 20))))
           ((keyp event #\M :c)
            (reset)
            (setf (frames fm)
                  (list (make-noise-frame 2
-                                         2
+                                         1
                                          (rows *console*)
                                          (cols *console*)))))
           ((keyp event #\U :c)
@@ -38,6 +38,9 @@
 (defun render-window (frame)
   (destructuring-bind (wr1 wc1 wr2 wc2) (fsz frame)
     (declare (ignore wc1))
+    (when (= wr2 (first *row2*))
+      (return-from render-window
+        (render-frame frame)))
     (ctl (:bgc #x11 #x11 #x11)
          (:fgc #xbb #xbb #xbb))
     (let ((col (1+ wc2)))
@@ -85,7 +88,8 @@
                  (ctl (:clr 1 (1+ len) 1 cols))
                  (out (:col 1 :row 1) status))
                (ctl (:fgc #xff #xa0 #xa0)
-                    (:bgc #x22 #x22 #x22))))))
+                    (:bgc #x22 #x22 #x22)))
+          do (finish-output *console-io*))))
 
 
 
@@ -151,8 +155,13 @@
 (defun make-report-frame (r1 c1 r2 c2)
   (flet ((reporter (frame)
            (declare (ignore frame))
-           (out (:row r1 :col c1)
-                "I'd like to report the key, but I don't know how.")))
+           (let ((str "I would like to report an event here!"))
+             (loop with rows = (+ (- r2 r1) 3)
+                   with col = (- c1 2)
+                   for row from (1- r1) upto (1+ r2)
+                   for id = (- row r1 -2)
+                   for string = (format nil "XXX ~d/~d: ~a" id rows str)
+                   do (out (:row row :col col :fgc '(#xff #x88 #x88)) string)))))
     (make-instance 'frame
                    :rfn #'reporter
                    :fsz (list r1 c1 r2 c2))))

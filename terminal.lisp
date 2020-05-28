@@ -66,8 +66,10 @@
               (col (cdr pos)))
          (loop for c from col
                for s across str
-               when (inside row c)
-                 do (put s))))))
+               if (inside row c)
+                 do (put s)
+               else
+                 do (cursor-right))))))
 
 (defmacro ctl (&rest operations)
   `(progn
@@ -137,6 +139,15 @@
 
 (defun restore-cursor-position ()
   (csi "u"))
+
+(macrolet ((moveit (endch)
+             `(if (= n 1)
+                  (csi ,endch)
+                  (csi n ,endch))))
+  (defun cursor-up    (&optional (n 1)) (moveit "A"))
+  (defun cursor-down  (&optional (n 1)) (moveit "B"))
+  (defun cursor-right (&optional (n 1)) (moveit "C"))
+  (defun cursor-left  (&optional (n 1)) (moveit "D")))
 
 (defun set-cursor-position (row col)
   (cond ((and row col)    (csi row ";" col "H"))
@@ -389,6 +400,7 @@ Returns a generalized boolean (when true returns a gesture)."
 
 (defun get-cursor-position ()
   (request-cursor-position)
+  (finish-output *console-io*)
   (handler-case (loop (read-input))
     (cursor-position-report (c)
       (values (row c) (col c)))))

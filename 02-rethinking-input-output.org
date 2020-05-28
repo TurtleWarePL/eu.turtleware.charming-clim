@@ -1,6 +1,25 @@
+#+title: Charming CLIM tutorial part 2 – Rethinking I/O
+#+author: Daniel 'jackdaniel' Kochmański
+#+email: daniel@turtleware.eu
+#+hugo_base_dir: ~/hugo/
+
+This is the second part of a tutorial about building a McCLIM backend
+for the terminal starting from zero. After reading [[https://turtleware.eu/posts/Controlling-the-terminal.html][the first issue]] we
+should have a good grasp of how to control and read input from the
+terminal. It is time to refine things for efficiency and ease of use.
+If you didn't follow the last part, here is the archive with the
+[[https://turtleware.eu/static/misc/01-controlling-the-terminal.tar.gz][source code]] which will serve as a starter for this post. If you like
+this kind of work, you can [[https://www.patreon.com/jackdaniel_kochmanski][toss a coin to your Lisper]] :-).
+
+Right now our I/O is synchronous with the terminal. When we call ~out~
+or ~ctl~, the characters are sent to it immedietely, and we read the
+input with ~read-input~ until the stream is empty. The model
+introduced in the previous post is certainly simple, but simple models
+tend to be hard to use efficiently . We'll settle on _easy_ instead.
+
 * Extending examples
 
-Let's construct a few examples which will help us identify some
+Let's construct a few examples which will help us to identify some
 problems. First move functions ~start-display~, ~show-screen~ and
 ~user-action~ to a separate file ~examples.lisp~ (don't forget to add
 this file to the system definition).
@@ -9,12 +28,15 @@ First we'll rework slightly our abstraction. First of all we'll
 introduce a frame-manager class which will be responsible for
 multiplexing input and output on the screen. It has two slots:
 
-- frames :: maintains a list of managed windows
-- active :: if this slot has a frame, then only this frame is rendered
+- frames :: a list of managed windows
+- active :: the active window
 
-All events will be passed to the function handle-event for the
-frame-manager to manage. We'll bind few keys initially: C-q will exit
-the application and C-r will remove all frames and clear the screen.
+For a time being when there is an active frame, only this frame is
+rendered. Otherwise all frames are rendered.
+
+All events will be passed to the function ~handle-event~. We'll bind
+few keys initially: C-q will exit the application and C-r will remove
+all frames and clear the screen.
 
 #+BEGIN_SRC lisp
   (defclass frame-manager ()
@@ -43,12 +65,12 @@ the application and C-r will remove all frames and clear the screen.
     (error "niy!"))
 #+END_SRC
 
-We will refactor the function ~start-display~ to show a modeline at
-the top which displays the current number of rows, columns and the
-FPS. Moreover it will create the frame manager and call functions
-defined above. When we start the application we'll see a heart warming
-message "We are that good!", meaning that we were too fast to measure
-the time meanigfully.
+Now let's refactor the function ~start-display~. It will a modeline at
+the top and display the terminal dimensions and the frame rate.
+Moreover it will create a frame manager and will be responsible for
+calling previously defined functions. When we start the application,
+we'll see a heart warming message "We are that good!", meaning that we
+are too fast to measure the FPS.
 
 #+BEGIN_SRC lisp
   (defun start-display ()
@@ -84,8 +106,8 @@ the time meanigfully.
                       (:bgc #x22 #x22 #x22))))))
 #+END_SRC
 
-Now we'll define a frame. A frame will be defined by its clipping
-region and the rendering function.
+Now we'll define the class for a frame. A frame will be defined by its
+clipping region and a rendering function.
 
 #+BEGIN_SRC lisp
   (defclass frame ()
@@ -98,21 +120,12 @@ region and the rendering function.
         (funcall (rfn frame) frame))))
 #+END_SRC
 
-To have something useful to render we'll also define three demos:
+For amusement and to have something to render, we'll define three
+demos to illustrate some issues.
 
-- colorful noise :: works like a white noise, but in color
-- animation :: draws a square bounding with constant speed
-- key press reporter :: prints events like previously
-
-We'll use them to illustrate issues with our rendering. Colorful noise
-run maximized will be our baseline benchmark (which proves that we are
-very inefficient), and when two frames overlap it will clearly show a
-flicker. Animation will also show flicker when we clear the background
-before drawing the square despite big fps. Also it is a fine example
-which illustrates how the animation speed should always be independent
-of fps. The last example shows right now that we have no meaningful
-way of obtaining input without stealing them from the frame manager
-and with small enough frame will illustrate necessity of scrollbars.
+The noise demo is like a white noise, but in color :-). It fills each
+cell with a different random color. We will use it as the rendering
+performance benchmark and to illustrate how overlapping frames behave.
 
 #+BEGIN_SRC lisp
   (defun make-noise-frame (r1 c1 r2 c2)
@@ -132,7 +145,14 @@ and with small enough frame will illustrate necessity of scrollbars.
                                  (alexandria:random-elt '(#x22 #x88 #xff))
                                  (alexandria:random-elt '(#x22 #x88 #xff))))
                      :fsz (list r1 c1 r2 c2))))
+#+END_SRC
 
+The animation demo will show a moving square bouncing from the frame
+edges. We will use it to illustrate a flicker which happens when we
+first clear the background and then draw it content even when the FPS
+rate is high. The animation speed does not depend on the fps.
+
+#+BEGIN_SRC lisp
   (defun make-animation-frame (r1 c1 r2 c2 speed)
     (let ((last-time (get-internal-real-time))
           (dc 1)
@@ -163,20 +183,39 @@ and with small enough frame will illustrate necessity of scrollbars.
                               (declare (ignore frame))
                               (draw-square))
                        :fsz (list r1 c1 r2 c2)))))
-
-  (defun make-report-frame (r1 c1 r2 c2)
-    (flet ((reporter (frame)
-             (out (:row r1 :col c1)
-                  "I'd like to report the key, but I don't know how.")))
-     (make-instance 'frame
-                    :rfn #'reporter
-                    :fsz (list r1 c1 r2 c2))))
 #+END_SRC
 
-Finally we'd like to see them on the screen, so we'll bind C-n and C-m
-for two different scenarios. Also C-u will be bound to toggle the
-active frame (which is picked at random). Add the following clauses to
-cond in ~handle-event~:
+The event demo is a stub for now. Later it will print events passed to
+it, for now it prints outside the frame. We will use it to illustrate
+a need for scroll bars and for the offset abstraction when the content
+goes beyond the frame dimensions and to reveal an interesting bug in
+the ~out~ macro.
+
+#+BEGIN_SRC lisp
+  (defun make-report-frame (r1 c1 r2 c2)
+    (flet ((reporter (frame)
+             (declare (ignore frame))
+             (let ((str "I would like to report an event here!"))
+               (loop with rows = (+ (- r2 r1) 3)
+                     with col = (- c1 2)
+                     for row from (1- r1) upto (1+ r2)
+                     for id = (- row r1 -2)
+                     for string = (format nil "XXX ~d/~d: ~a" id rows str)
+                     do (out (:row row :col col :fgc '(#xff #x88 #x88)) string)))))
+      (make-instance 'frame
+                     :rfn #'reporter
+                     :fsz (list r1 c1 r2 c2))))
+#+END_SRC
+
+Finally we'd like to see them on the screen, so we'll bind a few
+controls.
+
+- ~C-n~ will create four rather small frames: two overlapping noise
+  frames, one animation frame and one event reporting frame
+- ~C-m~ will create one maximized noise frame
+- ~C-u~ will toggle activation of a random frame
+
+Add the following clauses to cond in ~handle-event~:
 
 #+BEGIN_SRC lisp
   (defun handle-event (fm event)
@@ -189,12 +228,12 @@ cond in ~handle-event~:
              (list (make-noise-frame 4  2 12 20)
                    (make-noise-frame 6 12 14 30)
                    (make-animation-frame 4 36 10 78 20)
-                   (make-report-frame 20 3 25 15))))
+                   (make-report-frame 18 10 23 20))))
       ((keyp event #\M :c)
        (reset)
        (setf (frames fm)
              (list (make-noise-frame 2
-                                     2
+                                     1
                                      (rows *console*)
                                      (cols *console*)))))
       ((keyp event #\U :c)
@@ -204,21 +243,24 @@ cond in ~handle-event~:
              (setf (active fm) (alexandria:random-elt frs)))))))
 #+END_SRC
 
-We want to have window decorations. On a terminal space is limited and
-each character is precious, so we'll draw decorations only on the
-right border of the frame. Desired behavior is as follows:
+We also want to have window decorations. On a terminal the space is
+limited and each character is precious. That's why we'll draw
+decorations only on the right border of the frame. Desired behavior:
 
 - press "x" to close the frame
 - press "o" to maximize the frame ("v" to reverse)
 - press ">" to minimize the frame ("<" to reverse)
 - drag " " to move the frame
 - drag "/" to resize the frame
-- when frame output exceeds the frame size, add the scroll bars
+- when the frame output exceeds its size, add scroll bars
 
 #+BEGIN_SRC lisp
   (defun render-window (frame)
     (destructuring-bind (wr1 wc1 wr2 wc2) (fsz frame)
       (declare (ignore wc1))
+      (when (= wr2 (first *row2*))
+        (return-from render-window
+          (render-frame frame)))
       (ctl (:bgc #x11 #x11 #x11)
            (:fgc #xbb #xbb #xbb))
       (let ((col (1+ wc2)))
@@ -240,7 +282,11 @@ right border of the frame. Desired behavior is as follows:
 #+END_SRC
 
 Now press C-n to see a few frames and press C-m to see our baseline
-example. That shoud help us with testing in the next section.
+performance benchmark. Now we can move forward to test things.
+
+#+CAPTION: New examples in action.
+#+NAME:   fig:examples
+[[./static/02-examples.webm]]
 
 
 * Rethinking I/O
