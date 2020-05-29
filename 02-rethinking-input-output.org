@@ -288,56 +288,116 @@ performance benchmark. Now we can move forward to test things.
 #+NAME:   fig:examples
 [[./static/02-examples.webm]]
 
+Looking at our examples we can easily spot a few problems:
 
-* Rethinking I/O
+- the last two columns are not shown in the event demo
+- a small frame rate in the full screen noise demo (~40fps)
+- overlapping windows flicker and overexpose their output
+- flickering with the background in the animation demo
 
-WE HAVE A TECHNICAL DEBT! Ha, of course we do. We've remarked some of
-the earlier. Let's repeat them:
+The first issue is because we have a bug! When we render text in the
+event reporter demo, we start from a column which is two characters
+before the clipping area beginning. Looking at the macro ~out~ we have
+there the following loop:
 
-- flicker when we clear the screen (or due to the overlap)
-- lingering glitches on the screen after the terminal resize
-- function get-cursor-position may discard pending characters
-- no means to map input to the receiving element
-- no means to translate drawing position (i.e "move" the frame)
+#+BEGIN_SRC lisp
+  (loop for c from col
+        for s across str
+        when (inside row c)
+          do (put s))
+#+END_SRC
 
-Right now our I/O is synchronous with the terminal. When we call ~out~
-or ~ctl~, the characters are sent to it immedietely, and we read the
-input with ~read-input~ until the stream is empty. It is a very simple
-model and simple models tend to be hard to use efficiently. We'll
-settle on _easy_ instead of _simple_.
+Increasing the cursor position is an implicit side-effect of calling
+put. So when the character does not fit inside the clipping region, we
+leave the cursor at its previous position. That's why in fact we start
+drawing before the clipping region. We need to advance the cursor
+manually. Since we are at it, we will add a few more escape sequences:
 
-This program, when renderering on the area 80x24, yields very
-unimpressive 40fps on all three terminals I've tried it with. If we
-add ~(ctl (:clr 1 1 rows cols))~ before the loop in ~render-frame~
-we'll also notice a significant flicker. We can't write games like
-this! If we modify the function put to inhibit actual writing to the
-console we'll notice, that this operation is the bottleneck.
+#+BEGIN_SRC lisp
+  (macrolet ((moveit (endch)
+               `(if (= n 1)
+                    (csi ,endch)
+                    (csi n ,endch))))
+    (defun cursor-up    (&optional (n 1)) (moveit "A"))
+    (defun cursor-down  (&optional (n 1)) (moveit "B"))
+    (defun cursor-right (&optional (n 1)) (moveit "C"))
+    (defun cursor-left  (&optional (n 1)) (moveit "D")))
+
+  (defmacro out (#|...|#)
+    `(let (#|...|#)
+       #|...|#
+       (loop for c from col
+             for s across str
+             if (inside row c)
+               do (put s)
+             else
+               do (cursor-right))))
+#+END_SRC
+
+* Rethinking output
+
+** Analysis
+
+When we render the noise demo on the area 80x24 the frame rate is very
+unimpressive – around 40 fps. We can't write games like this!  We'll
+take a look at the function ~put~ which is responsible for the actual
+writing on the terminal. It has a call to ~finish-output~, but we
+don't need it to be called after each call. We'll put that at the end
+of the rendering loop instead. Don't forget to change
+~get-cursor-position~ to do that, otherwise we may get stuck during
+startup!
+
+#+BEGIN_SRC lisp
+  (defun put (&rest args)
+    "Put raw string on a console"
+    (format *console-io* "~{~a~}" args))
+
+  (defun start-display ()
+    #|...|#
+    (loop #|...|#
+          do (finish-output *console-io*)))
+
+  (defun get-cursor-position ()
+    (request-cursor-position)
+    (finish-output *console-io*) ; <-----
+    (handler-case (loop (read-input))
+      (cursor-position-report (c)
+        (values (row c) (col c)))))
+#+END_SRC
+
+Aha, Jackpot! Our rendering is now twice as fast as before with a
+staggering 100 frames per second. Let's go one step further and
+inhibit all writing to the terminal.
 
 #+BEGIN_SRC lisp
   (defvar *inhibit* nil)
   (defun put (&rest args)
     "Put raw string on a console"
     (unless *inhibit*
-      (format *console-io* "~{~a~}" args)
-      (finish-output *console-io*)))
+      (format *console-io* "~{~a~}" args)))
 
-  (defun start-display ()
-    #| ... |#
+  (defun display-screen (fm)
     (let ((*inhibit* t))
-      (render-frame (1- rows) cols))
-    #| ... |#)
+      (alexandria:if-let ((frame (active fm)))
+        (render-window frame)
+        (dolist (frame (frames fm))
+          (render-window frame)))))
 #+END_SRC
 
-That gives us whooping 500-1000fps, so clearly we need to write to the
-console as little as possible. The rest of the time is spent on
-looping over cells and doing things like picking a random color. In
-ideal world we'd touch each cell at most once for each frame. In our
-sample code we write far more bytes than one per cell, because we also
-send escape sequences for background and foreground -- that shows how
-very inefficient is our approach with the macro ~out~ restoring the
-initial state upon exit and always re-positioning the cursor. First
-let's count how many characters per frame do we print. Once again
-we'll abuse the function ~put~ to count that for us.
+That gives us whooping 500-1000fps on 80x24 window (what is the upper
+limit of the measurement which is based on the internal time). Clearly
+our rendering is I/O bound at the moment. Notice though, that even now
+when we resize the terminal (and recreate the frame) to i.e 158x84
+we'll have a frame rate around 111fps, which is not that impressive.
+There is certainly merit in optimizing for the CPU time after we fix
+the bottleneck with I/O.
+
+We need to write to the console as little as possible. The rest of the
+time is spent on looping over cells and doing things like picking a
+random color. Ideally we'd write at most one character in each cell,
+but we also do other things, like setting the cursor position and
+colors. It is time for us to count characters per frame! We can't do
+better than 80x24 = 1920 with the noise demo.
 
 #+BEGIN_SRC lisp
   (defvar *count* nil)
@@ -353,15 +413,11 @@ we'll abuse the function ~put~ to count that for us.
   (defun start-display ()
     #| ... |#
     (let (start stop delta count)
-      (setf start (get-internal-real-time))
+      #|...|#
       (let ((*count* 0))
-        (render-frame (1- rows) cols)
+        (display-screen fm)
         (setf count *count*))
-      (setf stop (get-internal-real-time))
-      (setf delta (/ (- stop start)
-                     internal-time-units-per-second))
-      (ctl (:fgc #x22 #x22 #x22)
-           (:bgc #xbb #xbb #xbb))
+      #|...|#
       (out (:col 1 :row rows)
            (format nil "Rows ~3d, Cols ~3d, FPS ~8,2f, chars ~8d"
                    (1- rows) cols (if (zerop delta)
@@ -371,59 +427,223 @@ we'll abuse the function ~put~ to count that for us.
     #| ... |#)
 #+END_SRC
 
-If we were only printing text without positioning the cursor, that
-would be 1920 characters on 24x80 terminal. Clearly that's not the
-case, on my terminal the number is around 150000, so we print 78x
-more! Let's experiment a little and skip setting the color.
+Let's remind ourselves what is the current shape of the function
+~make-noise-frame~, we'll tinker with it to compare different
+approaches:
 
 #+BEGIN_SRC lisp
-  (defun render-frame (rows cols)
-    (loop for row from 1 upto rows
-          do (loop for col from 1 upto cols
-                   for c.g = (alexandria:random-elt '(#x44 #x44 #x44 #x44 #x66))
-                   do (out (:row row
-                            :col col
-                            ;; :bgc `(0 0 0)
-                            ;; :fgc (list #x00 c.g #x44)
-                            )
-                           (alexandria:random-elt '("+" "-"))))))
+  (defun make-noise-frame (r1 c1 r2 c2)
+    (flet ((make-noise-renderer (color)
+             (lambda (frame)
+               (destructuring-bind (r1 c1 r2 c2) (fsz frame)
+                 (loop for row from r1 upto r2
+                       do (loop for col from c1 upto c2
+                                do (out (:row row
+                                         :col col
+                                         :bgc (alexandria:random-elt
+                                               `((0 0 0) (8 8 8)))
+                                         :fgc color)
+                                        (alexandria:random-elt '("+" "-")))))))))
+      (make-instance 'frame
+                     :rfn (make-noise-renderer
+                           (list (alexandria:random-elt '(#x22 #x88 #xff))
+                                 (alexandria:random-elt '(#x22 #x88 #xff))
+                                 (alexandria:random-elt '(#x22 #x88 #xff))))
+                     :fsz (list r1 c1 r2 c2))))
 #+END_SRC
 
-Lousy 40fps becomes 120fps and we print exactly 27864 characters per
-each frame. That gives us the terminal speed which is around 3343680
-characters per second. Notice, that not setting row and col in out
-macro doesn't change anything because of how the macro is constructed.
-If we replace the call to the macro ~out~ with ~put~ though, we
-benefit from line wrapping and we have exactly 1920 characters printed
-with 333-500fps. Now let's assume that each cell has different
-background and foreground color.
+This demo gives us 153267 characters per frame, which compared to 1920
+is over 81 times more. Something went terribly wrong! Our prime
+suspect is a macro ~out~. Let's put the ~out~ out of the picture.
+We'll set the state manually with ~ctl~ and won't bring back the old
+one. Also we won't bother we repositioning the cursor after each cell.
 
 #+BEGIN_SRC lisp
-  (defun render-frame (rows cols)
-    (loop for row from 1 upto rows
-          do (loop for col from 1 upto cols
-                   for c.g = (alexandria:random-elt '(#x44 #x44 #x44 #x44 #x66))
-                   do (ctl (:bgc 0 0 0)
-                           (:fgc 0 c.g #x44))
-                      (put (alexandria:random-elt '("+" "-"))))))
+  (defun make-noise-frame (r1 c1 r2 c2)
+    (flet ((make-noise-renderer (color)
+             (lambda (frame)
+               (ctl (:pos r1 . c1)) ; <- set the render beginning
+               (destructuring-bind (r1 c1 r2 c2) (fsz frame)
+                 (loop for row from r1 upto r2
+                       do (loop for col from c1 upto c2
+                                do (let ((fg color)
+                                         (bg (alexandria:random-elt `((0 0 0) (8 8 8)))))
+                                     (ctl (:fgc (first fg) (second fg) (third fg))
+                                          (:bgc (first bg) (second bg) (third bg))))
+                                   (put (alexandria:random-elt '("+" "-")))))))))
+      (make-instance 'frame
+                     :rfn (make-noise-renderer
+                           (list (alexandria:random-elt '(#x22 #x88 #xff))
+                                 (alexandria:random-elt '(#x22 #x88 #xff))
+                                 (alexandria:random-elt '(#x22 #x88 #xff))))
+                     :fsz (list r1 c1 r2 c2))))
 #+END_SRC
 
-So if we assume, that each cell is drawn only once and that we do not
-explicitly manipulate the cursor position, we have 56050 characters
-and an acceptable 100-111fps on 24x80 terminal. Our performance drops
-when we grow the terminal. For instance:
+That gives us 59526 characters per frame what is almost thrice as
+fast. Now let's try skipping setting the color whatsoever.
 
-| col;row | fps (out) | fps (ctl+put) | fps (put) |
-|---------+-----------+---------------+-----------|
-|   80x24 |     41-45 |       100-111 |   333-500 |
-|   80x80 |     11-12 |         20-30 |   111-125 |
-|  158x82 |       5-6 |         10-12 |     55-60 |
-|  318x82 |       2-3 |           4-5 |     29-30 |
+#+BEGIN_SRC lisp
+  (defun make-noise-frame (r1 c1 r2 c2)
+    (flet ((make-noise-renderer (color)
+             (lambda (frame)
+               (ctl (:pos r1 . c1)) ; <- set the render beginning
+               (destructuring-bind (r1 c1 r2 c2) (fsz frame)
+                 (loop for row from r1 upto r2
+                       do (loop for col from c1 upto c2
+                                do (put (alexandria:random-elt '("+" "-")))))))))
+      (make-instance 'frame
+                     :rfn (make-noise-renderer
+                           (list (alexandria:random-elt '(#x22 #x88 #xff))
+                                 (alexandria:random-elt '(#x22 #x88 #xff))
+                                 (alexandria:random-elt '(#x22 #x88 #xff))))
+                     :fsz (list r1 c1 r2 c2))))
+#+END_SRC
 
-Of course we can't expect the programmer to always start from the
-first column and to never draw over the already filled cell. We will
-introduce in-memory buffers which will be flushed when the frame is
-complete. Since we assume, that writing to the console is always the
-bottleneck, we will in fact maintain two buffers and update only cells
-which are different. It won't have big impact for the white noise, but
-for regular applications it will be a win.
+Aha, 1926 characters! Setting the cursor position accounts for the
+remaining 6 characters ~ESC [ 2 ; 1 H~. So truly the macro ~out~ is
+our culprit.
+
+Here is a short comparison of these approaches. ~out~ brings back the
+old state, ~ctl+put~ sets the color for each cell but doesn't restore
+the old state, and ~put~ sets the position only once and writes to
+consecutive cells (no color). Numbers are ~fps / chars-per-frame~. The
+throughput of my terminal is roughly 10M characters per second.
+
+| col;row | out           | ctl+put      | put          |
+|---------+---------------+--------------+--------------|
+|   80x24 | 100 / 154664  | 250 / 61446  | 500+ / 1926  |
+|   80x80 | 19  / 517040  | 77  / 211206 | 500+ / 6406  |
+|  159x86 | 8   / 1097034 | 14  / 423900 | 333  / 13680 |
+|  319x86 | 5   / 2210304 | 10  / 877894 | 166  / 27440 |
+
+These numbers may differ in case of examples with colors, because they
+are selected randomly, and printing ~255;255;255~ consumes obviously
+more characters than i.e ~42;42;42~. Also note, that this is the worst
+case scenario where we change colors for each cell of both background
+and foreground. Usually numbers should be much more favorable to us.
+
+#+CAPTION: New examples in action.
+#+NAME:   fig:examples
+[[./static/02-examples.webm]]
+
+As we can see, a major bottlenecks are:
+- bringing back the old state of a medium
+- repositioning the cursor for output
+- changing foreground and background color
+
+Sometimes changing color is not necessary, because it does not change
+from cell to cell. For instance in the noise demo the foreground color
+doesn't change and only the background color is picked randomly.
+
+** Refining interfaces
+
+Being able to draw anywhere on the screen with color is certainly
+useful feature and demanding from the programmer to print only to
+consecutive cells would be bold. Bringing back the old state is also
+nice because there is no need for excess bookkeeping. In other words,
+traits of the macro ~out~ are very reasonable and we don't want to
+change them.
+
+#+BEGIN_QUOTE David Wheeler
+All problems in computer science can be solved by another level of
+indirection.
+#+END_QUOTE
+
+... except for the problem of too many layers of indirection. As you
+may guess, we'll introduce a layer of indirection to the console
+access. Macros ~out~ and ~ctl~ will manipulate a virtual buffer with
+virtual cells which have properties like colors and content. Our
+interface will be split between the low level for direct terminal
+access and the high level for convenient use. That way we'll have both
+_simple_ and _easy_ interfaces available. We will extend them when
+needed. Create a new file ~packages.lisp~ and add it to the system
+definition.
+
+#+BEGIN_SRC lisp
+  (defpackage #:eu.turtleware.charming-clim.terminal/ll
+    (:export #:init-console
+             #:close-console
+
+             #:put #:esc #:csi #:sgr
+             #:read-input #:set-alt-is-meta #:keyp
+
+             #:reset-console
+             #:clear-console
+             #:clear-rectangle
+             #:clear-line
+             #:set-foreground-color
+             #:set-background-color
+
+             #:with-cursor-position
+             #:set-cursor-position
+             #:save-cursor-position
+             #:restore-cursor-position
+             #:request-cursor-position
+
+             #:cursor-up
+             #:cursor-down
+             #:cursor-right
+             #:cursor-left
+
+             #:set-cursor-visibility
+             #:set-mouse-tracking))
+
+  (defpackage #:eu.turtleware.charming-clim.terminal/hl
+    (:export #:with-console
+             #:make-vbuf
+             #:with-vbuf
+             #:out #:ctl))
+
+  (defpackage #:eu.turtleware.charming-clim
+    (:use #:common-lisp
+          #:eu.turtleware.charming-clim.terminal/ll
+          #:eu.turtleware.charming-clim.terminal/hl))
+#+END_SRC
+
+Notice, that all implementation is done in a single package, namely
+~eu.turtleware.charming-clim~. That is a deliberate choice which saves
+us from the package hell. We'll take this opportunity to rename "setf"
+functions to something more consistent with other symbols:
+
+- ~(setf cursor-visibility)~ -> ~set-cursor-visibility~
+- ~(setf mouse-tracking)~    -> ~set-mouse-tracking~
+- ~(setf alt-is-meta)~       -> ~set-alt-is-meta~
+
+Change these names and adjust all references in the source code now.
+
+
+** Virtual buffers
+
+
+
+** flicker 
+Flicker is caused by the fact, that we draw multiple times on the same
+cell. In case of the animation it is first drawing the background and
+then drawing the square, and for overlapping windows it is rendering
+windows sequentially. Coincidentally these issues will be solved by
+the solution for the slow frame rate. Since we are at it, we should
+consider a few things about rendering frames in windows:
+
+- moving the window requires the translation transformation API
+- when part of the window is not visible we may not draw it
+- for a static content it is enough to redraw a damaged region
+- a dynamic content depends on a hidden state (i.e the time)
+
+To allow moving windows we'll introduce a new macro ~with-drawing~
+which will allow specifying the output transformation. It will also
+subsume the functionality of a macro ~with-clipping~ which will be
+removed.
+
+
+
+#+BEGIN_SRC lisp
+
+#+END_SRC
+
+To allow moving windows we'll replace the macro ~with-clipping~ with a
+new one called ~with-drawing~. It will accept the same arguments as
+~with-clipping~ and additionally arguments ~trow~, ~crow~ and ~tran-fn~. 
+
+To address these points we will replace the macro ~with-clipping~ with
+another one subsuming its behavior, which will be called
+~with-drawing~. 

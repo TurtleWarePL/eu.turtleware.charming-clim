@@ -1,6 +1,3 @@
-(defpackage #:eu.turtleware.charming-clim
-  (:use #:cl)
-  (:export #:with-console #:out #:ctl))
 (in-package #:eu.turtleware.charming-clim)
 
 ;; gcc raw-mode.c -shared -o raw-mode.so
@@ -79,16 +76,15 @@
                          (:clr `(clear-rectangle ,@args))
                          (:fgc `(setf (fgc *console*) (list ,@args)))
                          (:bgc `(setf (bgc *console*) (list ,@args)))
-                         (:cvp `(setf (cursor-visibility) ,@args))
-                         (:ptr `(setf (mouse-tracking) ,@args))
+                         (:cvp `(set-cursor-visibility ,@args))
+                         (:ptr `(set-mouse-tracking ,@args))
                          (:pos `(setf (pos *console*) (cons ,(car args)
                                                             ,(cdr args)))))))))
 
 
 (defun put (&rest args)
   "Put raw string on a console"
-  (format *console-io* "~{~a~}" args)
-  (finish-output *console-io*))
+  (princ (format nil "~{~a~}" args) *console-io*))
 
 (defun esc (&rest args)
   "Escape sequence"
@@ -161,7 +157,7 @@
      (unwind-protect (progn ,@body)
        (restore-cursor-position))))
 
-(defun (setf cursor-visibility) (visiblep)
+(defun set-cursor-visibility (visiblep)
   (if visiblep
       (csi "?" 2 5 "h")
       (csi "?" 2 5 "l")))
@@ -170,7 +166,7 @@
 ;;; tracking: 1000 - normal, 1002 - button, 1003 - all motion
 ;;;           1004 - focus in/out
 ;;; encoding: 1006 - sgr encoding scheme
-(defun (setf mouse-tracking) (enabledp)
+(defun set-mouse-tracking (enabledp)
   (if enabledp
       (csi "?" 1003 ";" 1006 "h")
       (csi "?" 1003 "l")))
@@ -187,7 +183,7 @@
   (defconstant  +alt-mod*+  2)
   (defconstant  +shift-mod+ 1))
 
-(defun (setf alt-is-meta) (bool)
+(defun set-alt-is-meta (bool)
   (if bool
       (setf +alt-mod+ +meta-mod+)
       (setf +alt-mod+ +alt-mod*+)))
@@ -441,8 +437,8 @@ Returns a generalized boolean (when true returns a gesture)."
   (apply #'set-foreground-color fgc)
   (apply #'set-background-color bgc)
   (set-cursor-position (car pos) (cdr pos))
-  (setf (cursor-visibility) cvp)
-  (setf (mouse-tracking) ptr)
+  (set-cursor-visibility cvp)
+  (set-mouse-tracking ptr)
   (let ((*console* instance))
     (update-console-dimensions)))
 
@@ -460,10 +456,10 @@ Returns a generalized boolean (when true returns a gesture)."
   (set-cursor-position (car pos) (cdr pos)))
 
 (defmethod (setf ptr) :after (ptr (instance console))
-  (setf (mouse-tracking) (not (null ptr))))
+  (set-mouse-tracking (not (null ptr))))
 
 (defmethod (setf cvp) :after (cvp (instance console))
-  (setf (cursor-visibility) (not (null cvp))))
+  (set-cursor-visibility (not (null cvp))))
 
 (defmacro with-console ((&rest args
                          &key ios fgc bgc cvp fps &allow-other-keys)

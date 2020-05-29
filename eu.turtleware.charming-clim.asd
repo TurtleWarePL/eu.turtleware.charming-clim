@@ -30,5 +30,6 @@
   :components ((:static-file "01-controlling-the-terminal.org")
                (:static-file "02-rethinking-input-output.org")
                (:cfile "raw-mode")
+               (:file "packages")
                (:file "terminal")
                (:file "examples")))

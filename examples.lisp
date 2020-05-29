@@ -114,12 +114,12 @@
                                              `((0 0 0) (8 8 8)))
                                        :fgc color)
                                       (alexandria:random-elt '("+" "-")))))))))
-   (make-instance 'frame
-                  :rfn (make-noise-renderer
-                        (list (alexandria:random-elt '(#x22 #x88 #xff))
-                              (alexandria:random-elt '(#x22 #x88 #xff))
-                              (alexandria:random-elt '(#x22 #x88 #xff))))
-                  :fsz (list r1 c1 r2 c2))))
+    (make-instance 'frame
+                   :rfn (make-noise-renderer
+                         (list (alexandria:random-elt '(#x22 #x88 #xff))
+                               (alexandria:random-elt '(#x22 #x88 #xff))
+                               (alexandria:random-elt '(#x22 #x88 #xff))))
+                   :fsz (list r1 c1 r2 c2))))
 
 (defun make-animation-frame (r1 c1 r2 c2 speed)
   (let ((last-time (get-internal-real-time))
