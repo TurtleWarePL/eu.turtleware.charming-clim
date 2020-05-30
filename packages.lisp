@@ -1,6 +1,7 @@
 (defpackage #:eu.turtleware.charming-clim.terminal/ll
   (:export #:init-console
            #:close-console
+           #:*console-io*
 
            #:put #:esc #:csi #:sgr
            #:read-input #:keyp
@@ -27,10 +28,7 @@
            #:set-mouse-tracking))
 
 (defpackage #:eu.turtleware.charming-clim.terminal/hl
-  (:export #:with-console
-           #:make-vbuf
-           #:with-vbuf
-           #:out #:ctl))
+  (:export #:with-console #:out #:ctl))
 
 (defpackage #:eu.turtleware.charming-clim
   (:use #:common-lisp

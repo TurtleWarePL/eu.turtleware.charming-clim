@@ -31,5 +31,6 @@
                (:static-file "02-rethinking-input-output.org")
                (:cfile "raw-mode")
                (:file "packages")
-               (:file "terminal")
-               (:file "examples")))
+               (:file "terminal" :depends-on ("raw-mode" "packages"))
+               (:file "vconsole" :depends-on ("terminal" "packages"))
+               (:file "examples" :depends-on ("terminal" "vconsole"))))

@@ -556,13 +556,13 @@ virtual cells which have properties like colors and content. Our
 interface will be split between the low level for direct terminal
 access and the high level for convenient use. That way we'll have both
 _simple_ and _easy_ interfaces available. We will extend them when
-needed. Create a new file ~packages.lisp~ and add it to the system
-definition.
+needed. Create a new file ~packages.lisp~.
 
 #+BEGIN_SRC lisp
   (defpackage #:eu.turtleware.charming-clim.terminal/ll
     (:export #:init-console
              #:close-console
+             #:*console-io*
 
              #:put #:esc #:csi #:sgr
              #:read-input #:set-alt-is-meta #:keyp
@@ -574,8 +574,8 @@ definition.
              #:set-foreground-color
              #:set-background-color
 
-             #:with-cursor-position
              #:set-cursor-position
+             #:with-cursor-position
              #:save-cursor-position
              #:restore-cursor-position
              #:request-cursor-position
@@ -590,8 +590,6 @@ definition.
 
   (defpackage #:eu.turtleware.charming-clim.terminal/hl
     (:export #:with-console
-             #:make-vbuf
-             #:with-vbuf
              #:out #:ctl))
 
   (defpackage #:eu.turtleware.charming-clim
@@ -602,14 +600,41 @@ definition.
 
 Notice, that all implementation is done in a single package, namely
 ~eu.turtleware.charming-clim~. That is a deliberate choice which saves
-us from the package hell. We'll take this opportunity to rename "setf"
-functions to something more consistent with other symbols:
+us from the package hell while still allowing users to pick from
+nicely crafted APIs. We'll take this opportunity to rename "setf"
+functions to be more consistent with other symbols:
 
 - ~(setf cursor-visibility)~ -> ~set-cursor-visibility~
 - ~(setf mouse-tracking)~    -> ~set-mouse-tracking~
 - ~(setf alt-is-meta)~       -> ~set-alt-is-meta~
 
-Change these names and adjust all references in the source code now.
+Change these names and adjust all references in the source code
+now. Temporarily we still use internal symbols in the examples, but
+eventually we want them to use only the high level package. Create a
+new file ~vconsole.lisp~ and move there the variable ~*console*~, the
+clipping functionality, macros ~out~ and ~ctl~, functions
+~clear-rectangle~, ~get-cursor-position~, ~update-console-dimensions~,
+the class ~console~ with its definitions and the macro ~with-console~.
+
+A new system definition should look like this:
+
+#+BEGIN_SRC lisp
+  (defsystem "eu.turtleware.charming-clim"
+    :defsystem-depends-on (#:cffi)
+    :depends-on (#:alexandria #:cffi #:swank)
+    :components ((:static-file "01-controlling-the-terminal.org")
+                 (:static-file "02-rethinking-input-output.org")
+                 (:cfile "raw-mode")
+                 (:file "packages")
+                 (:file "terminal" :depends-on ("raw-mode" "packages"))
+                 (:file "vconsole" :depends-on ("terminal" "packages"))
+                 (:file "examples" :depends-on ("packages" "terminal" "vconsole"))))
+#+END_SRC
+
+Before going further make sure that the system works the same as
+previously. Such refactors are prone to typos and omissions.
+
+
 
 
 ** Virtual buffers
