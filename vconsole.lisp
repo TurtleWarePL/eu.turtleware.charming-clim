@@ -65,8 +65,10 @@
   (loop with buf = (data *console*)
         with fgc = (fgc *console*)
         with bgc = (bgc *console*)
-        for row-index from (1- r1) upto (1- r2)
-        do (loop for col-index from (1- c1) upto (1- c2)
+        with max-row-index = (1- (min r2 (array-dimension buf 0)))
+        with max-col-index = (1- (min c2 (array-dimension buf 1)))
+        for row-index from (1- r1) upto max-row-index
+        do (loop for col-index from (1- c1) upto max-col-index
                  do (setf (aref buf row-index col-index)
                           (list #\space fgc bgc)))))
 

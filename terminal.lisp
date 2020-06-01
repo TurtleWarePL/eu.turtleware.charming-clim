@@ -27,11 +27,17 @@
     "The ESC character (#\esc)."))
 
 
+(defvar *inhibit* nil)
+(defvar *count* nil)
 
-
 (defun put (&rest args)
   "Put raw string on a console"
-  (princ (format nil "~{~a~}" args) *console-io*))
+  (unless *inhibit*
+    (let* ((payload (format nil "~{~a~}" args))
+           (length (length payload)))
+      (when *count*
+        (incf *count* length))
+      (princ payload *console-io*))))
 
 (defun esc (&rest args)
   "Escape sequence"

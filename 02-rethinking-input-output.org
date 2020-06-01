@@ -522,9 +522,9 @@ more characters than i.e ~42;42;42~. Also note, that this is the worst
 case scenario where we change colors for each cell of both background
 and foreground. Usually numbers should be much more favorable to us.
 
-#+CAPTION: New examples in action.
-#+NAME:   fig:examples
-[[./static/02-examples.webm]]
+#+CAPTION: Noise demo variants
+#+NAME:   fig:noise
+[[./static/02-noise-demo.webm]]
 
 As we can see, a major bottlenecks are:
 - bringing back the old state of a medium
@@ -849,12 +849,113 @@ and flushing the buffer.
     (loop with buf = (data *console*)
           with fgc = (fgc *console*)
           with bgc = (bgc *console*)
-          for row-index from (1- r1) upto (1- r2)
-          do (loop for col-index from (1- c1) upto (1- c2)
+          with max-row-index = (1- (min r2 (array-dimension buf 0)))
+          with max-col-index = (1- (min c2 (array-dimension buf 1)))
+          for row-index from (1- r1) upto max-row-index
+          do (loop for col-index from (1- c1) upto max-col-index
                    do (setf (aref buf row-index col-index)
                             (list #\space fgc bgc)))))
 #+END_SRC
 
+Finally we need to update examples. Instead of ~finish-output~ in the
+last form of the ~loop~ in ~start-display~ we need to flush the buffer
+with the ~ctl~ operator and we need clear the array in ~handle-event~
+(instead of clearing the terminal, because array contents will be
+redrawn on it anyway in the next iteration).
+
+#+BEGIN_SRC lisp
+(defun handle-event (fm event)
+  (flet ((reset ()
+           #|...|#
+           (clear-rectangle 1 1 (rows *console*) (cols *console*))))
+    #|...|#))
+
+(defun start-display ()
+  #|...|#
+  (loop #|...|#
+    ;;; do (finish-output *console-io*)
+    do (ctl (:fls)))
+#+END_SRC
+
+After this step examples should work, although our measurement methods
+are giving us wrong results. FPS and character count is measured for
+the function ~display-screen~ while part of the time is spent on
+flushing the buffer, and all characters are written there. We will
+gather information for a whole iteration and print it in the next
+header (so printed data describes a previous frame including the top
+bar with the information):
+
+#+BEGIN_SRC lisp
+;; terminal.lisp
+(defvar *inhibit* nil)
+(defvar *count* nil)
+
+(defun put (&rest args)
+  "Put raw string on a console"
+  (unless *inhibit*
+    (let* ((payload (format nil "~{~a~}" args))
+           (length (length payload)))
+      (when *count*
+        (incf *count* length))
+      (princ payload *console-io*))))
+
+;; examples.lisp
+(defun start-display ()
+  (swank:create-server)
+  (with-console (:ios *terminal-io*)
+    (clear-console)
+    (loop with fm = (make-instance 'frame-manager)
+          with count = 0
+          with fps = :|We are that good!|
+          for rows = (rows *console*)
+          for cols = (cols *console*)
+          for start = (get-internal-real-time)
+          for *count* = 0
+          do (loop for ch = (read-input)
+                   until (null ch)
+                   do (handle-event fm ch))
+          do (display-screen fm)
+             (ctl (:fgc #x22 #x22 #x22)
+                  (:bgc #xbb #xbb #xbb))
+             (let* ((status (format nil "Rows ~3d, Cols ~3d, FPS ~8,2f, chars ~8d"
+                                    (1- rows) cols fps count))
+                    (len (length status)))
+               (ctl (:clr 1 (min (1+ len) cols) 1 cols))
+               (out (:col 1 :row 1) status))
+             (ctl (:fgc #xff #xa0 #xa0)
+                  (:bgc #x22 #x22 #x22))
+          do (ctl (:fls))
+             (setf count *count*)
+             (let* ((stop (get-internal-real-time))
+                    (delta (/ (- stop start) internal-time-units-per-second)))
+               (if (zerop delta)
+                   (setf fps :|We are that good!|)
+                   (setf fps (/ 1.0 delta)))))))
+#+END_SRC
+
+Now when we run examples we notice a few important things:
+
+1. Frame rate is constant disregarding of how much we draw
+
+It is roughly similar to the ~put+ctl~ version from our previous
+benchmark. The fact that we are slow is because we always write whole
+array and we always do set the position and color for the printed
+character.
+
+2. There is no flicker between separate drawings
+
+Both overlapping windows and animated square do not flicker anymore,
+because all updates are done in the memory, only the final result is
+rendered. So we've that problem solved.
+
+3. Console size is updated interactively when we resize the terminal
+
+We've started invoked ~update-console-dimensions~ in order to adjust
+the array in the ~(ctl (:fls))~. This is a very nice side effect.
+
+#+CAPTION: Virtual console in action
+#+NAME:   fig:vconsole
+[[./static/02-vconsole.webm]]
 
 
 

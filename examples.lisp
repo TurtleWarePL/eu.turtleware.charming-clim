@@ -10,7 +10,7 @@
            (setf (frames fm) nil
                  (active fm) nil)
            (update-console-dimensions)
-           (clear-console)))
+           (clear-rectangle 1 1 (rows *console*) (cols *console*))))
     (cond ((keyp event #\Q :c)
            (cl-user::quit))
           ((keyp event #\R :c)
@@ -65,31 +65,32 @@
   (with-console (:ios *terminal-io*)
     (clear-console)
     (loop with fm = (make-instance 'frame-manager)
+          with count = 0
+          with fps = :|We are that good!|
           for rows = (rows *console*)
           for cols = (cols *console*)
-          do (setf rows (rows *console*)
-                   cols (cols *console*))
+          for start = (get-internal-real-time)
+          for *count* = 0
           do (loop for ch = (read-input)
                    until (null ch)
                    do (handle-event fm ch))
-          do (let (start stop delta)
-               (setf start (get-internal-real-time))
-               (display-screen fm)
-               (setf stop (get-internal-real-time))
-               (setf delta (/ (- stop start)
-                              internal-time-units-per-second))
-               (ctl (:fgc #x22 #x22 #x22)
-                    (:bgc #xbb #xbb #xbb))
-               (let* ((status (format nil "Rows ~3d, Cols ~3d, FPS ~8,2f"
-                                      (1- rows) cols (if (zerop delta)
-                                                         :|We are that good!|
-                                                         (/ 1.0 delta))))
-                      (len (length status)))
-                 (ctl (:clr 1 (1+ len) 1 cols))
-                 (out (:col 1 :row 1) status))
-               (ctl (:fgc #xff #xa0 #xa0)
-                    (:bgc #x22 #x22 #x22)))
-          do (finish-output *console-io*))))
+          do (display-screen fm)
+             (ctl (:fgc #x22 #x22 #x22)
+                  (:bgc #xbb #xbb #xbb))
+             (let* ((status (format nil "Rows ~3d, Cols ~3d, FPS ~8,2f, chars ~8d"
+                                    (1- rows) cols fps count))
+                    (len (length status)))
+               (ctl (:clr 1 (min (1+ len) cols) 1 cols))
+               (out (:col 1 :row 1) status))
+             (ctl (:fgc #xff #xa0 #xa0)
+                  (:bgc #x22 #x22 #x22))
+          do (ctl (:fls))
+             (setf count *count*)
+             (let* ((stop (get-internal-real-time))
+                    (delta (/ (- stop start) internal-time-units-per-second)))
+               (if (zerop delta)
+                   (setf fps :|We are that good!|)
+                   (setf fps (/ 1.0 delta)))))))
 
 
 
