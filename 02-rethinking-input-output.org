@@ -634,6 +634,120 @@ A new system definition should look like this:
 Before going further make sure that the system works the same as
 previously. Such refactors are prone to typos and omissions.
 
+** Virtual console
+
+We've already introduced the class ~console~ which is a layer of
+indirection for a terminal access. We will extend this concept into
+something resembling a display server. Time to introduce a few terms:
+
+- terminal :: an actual terminal area
+- vconsole :: a virtual screen area
+- surface  :: a rectangular area on a vconsole
+- vbuffer  :: an object which may be mapped onto a surface
+
+The visible output of our display server is the intersection between a
+~terminal~ and a ~vconsole~ areas. Separation of the ~vbuffer~ and the
+~surface~ is necessary if we consider the output which does not fit in
+its window (and requires scroll bars).
+
+~vconsole~ and ~vbuffer~ have the same prefix because they are very
+similar – both serve as the intermediary between the operation and the
+drawing. That's why they will implement a common protocol made of a
+single function ~flush-buffer~ which name is self-explanatory. It
+specializes on the first argument and is expected to flush its output
+onto a rectangle specified by other arguments.
+
+#+BEGIN_SRC lisp
+  (defgeneric flush-buffer (buffer r1 c1 r2 c2))
+#+END_SRC
+
+We'll start with renaming the class ~console~ and removing ~:after~
+methods which immediately send the escape sequence when particular
+slots are set.
+
+#+BEGIN_SRC lisp
+  ;; rename the class
+
+  (defclass vconsole () #| ... |#)
+
+  (defmethod initialize-instance :after
+      ((instance vconsole) &key fgc bgc pos cvp ptr)
+    #| ... |#)
+
+  (defmacro with-console (#|...|#)
+    #| ... |# (make-instance 'vconsole ,@args))
+
+  ;; remove methods
+
+  ;; (defmethod (setf fgc) :after (rgb (instance console))
+  ;;   (apply #'set-foreground-color rgb))
+
+  ;; (defmethod (setf bgc) :after (rgb (instance console))
+  ;;   (apply #'set-background-color rgb))
+
+  ;; (defmethod (setf pos) :before (pos (instance console))
+  ;;   (check-type (car pos) (integer 1))
+  ;;   (check-type (cdr pos) (integer 1)))
+
+  ;; (defmethod (setf pos) :after (pos (instance console))
+  ;;   (set-cursor-position (car pos) (cdr pos)))
+
+  ;; (defmethod (setf ptr) :after (ptr (instance console))
+  ;;   (set-mouse-tracking (not (null ptr))))
+
+  ;; (defmethod (setf cvp) :after (cvp (instance console))
+  ;;   (set-cursor-visibility (not (null cvp))))
+#+END_SRC
+
+
+Now replace a cumbersome slot ~pos~ with separate slots ~row~ and
+~col~. That requires also modifications to the macro ~out~ and
+~ctl~. Since we are at it remove also the slot ~app~.
+
+#+BEGIN_SRC lisp
+  (defclass vconsole ()
+    (;; (pos ...)
+     ;; (app ...)
+     (row :initarg :row :accessor row)
+     (col :initarg :col :accessor col)
+     #| ... |#)
+    (:default-initargs ;; :pos '(1 . 1)
+                       ;; :app nil
+                       :row 1
+                       :col 1
+                       #| ... |#))
+
+  (defmacro out ((&key row col fgc bgc) object)
+    "Put an object on a console"
+    `(let ((str (princ-to-string ,object)))
+       (assert (null (find #\newline str)))
+       (letf (((row *console*) (or ,row (row *console*))
+               (col *console*) (or ,col (col *console*)))
+              ,@(when fgc `(((fgc *console*) ,fgc)))
+              ,@(when bgc `(((bgc *console*) ,bgc))))
+         (let ((row (row *console*))
+               (col (col *console*)))
+           (loop for c from col
+                 for s across str
+                 if (inside row c)
+                   do (put s)
+                 else
+                   do (cursor-right))))))
+
+  (defmacro ctl (&rest operations)
+    `(progn
+       ,@(loop for op in operations
+               collect (destructuring-bind (name &rest args) op
+                         (ecase name
+                           (:clr `(clear-rectangle ,@args))
+                           (:fgc `(setf (fgc *console*) (list ,@args)))
+                           (:bgc `(setf (bgc *console*) (list ,@args)))
+                           (:cvp `(setf (cvp *console*) ,@args))
+                           (:ptr `(setf (ptr *console*) ,@args))
+                           (:row `(setf (row *console*) ,@args))
+                           (:col `(setf (col *console*) ,@args)))))))
+#+END_SRC
+
 
 
 
