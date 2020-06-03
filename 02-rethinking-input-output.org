@@ -1008,34 +1008,3 @@ FPS also increases significantly.
 [[./static/02-optimize-flush-buffer.webm]]
 
 
-** flicker 
-Flicker is caused by the fact, that we draw multiple times on the same
-cell. In case of the animation it is first drawing the background and
-then drawing the square, and for overlapping windows it is rendering
-windows sequentially. Coincidentally these issues will be solved by
-the solution for the slow frame rate. Since we are at it, we should
-consider a few things about rendering frames in windows:
-
-- moving the window requires the translation transformation API
-- when part of the window is not visible we may not draw it
-- for a static content it is enough to redraw a damaged region
-- a dynamic content depends on a hidden state (i.e the time)
-
-To allow moving windows we'll introduce a new macro ~with-drawing~
-which will allow specifying the output transformation. It will also
-subsume the functionality of a macro ~with-clipping~ which will be
-removed.
-
-
-
-#+BEGIN_SRC lisp
-
-#+END_SRC
-
-To allow moving windows we'll replace the macro ~with-clipping~ with a
-new one called ~with-drawing~. It will accept the same arguments as
-~with-clipping~ and additionally arguments ~trow~, ~crow~ and ~tran-fn~. 
-
-To address these points we will replace the macro ~with-clipping~ with
-another one subsuming its behavior, which will be called
-~with-drawing~. 
