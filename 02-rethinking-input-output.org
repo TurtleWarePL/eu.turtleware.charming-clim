@@ -957,10 +957,55 @@ the array in the ~(ctl (:fls))~. This is a very nice side effect.
 #+NAME:   fig:vconsole
 [[./static/02-vconsole.webm]]
 
+** Optimizing flush-buffer
 
+Our improvements caused that our rendering is smooth. On the other
+hand, we always exhibit the worst case scenario regardless of a
+damaged area and flush whole array. On top of that each written
+character conses a new list. If that's not enough we need to also
+note, that we set the cursor position and color even when we don't
+have to. This section will try to address these performance issues.
 
-** Virtual buffers
+First we'll try to not modify the cursor position and colors in the
+function ~flush-buffer~ when it is not necessary. Since the method
+specialized on the ~vconsole~ is always called after updating the
+console dimensions, we know that text will wrap when it advances from
+the last column, so we may set it only once. Regarding colors it is a
+matter of tracking whether the cursor color changes.
 
+#+BEGIN_SRC lisp
+  (defmethod flush-buffer ((buffer vconsole) r1 c1 r2 c2)
+    (set-cursor-position r1 c1)
+    (loop with data = (data *console*)
+          with max-row-index = (1- (min r2 (array-dimension data 0)))
+          with max-col-index = (1- (min c2 (array-dimension data 1)))
+          for row-index from (1- r1) upto max-row-index
+          do (loop with last-fg = nil
+                   with last-bg = nil
+                   for col-index from (1- c1) upto max-col-index
+                   do (let ((cell (aref data row-index col-index)))
+                        (destructuring-bind (character
+                                             (fg.r fg.g fg.b)
+                                             (bg.r bg.g bg.b))
+                            cell
+                          (unless (equal last-fg (second cell))
+                            (set-foreground-color fg.r fg.g fg.b)
+                            (setf last-fg (second cell)))
+                          (unless (equal last-bg (third cell))
+                            (set-background-color bg.r bg.g bg.b)
+                            (setf last-bg (third cell)))
+                          (put character))))
+          finally (finish-output *console-io*)))
+#+END_SRC
+
+These changes give us a wonderful improvement. For a terminal of size
+80x24 a full screen noise demo number of characters written drops from
+80000 down to 15000, and for smaller windows from 85000 down to 7000!
+FPS also increases significantly.
+
+#+CAPTION: Optimize flush buffer
+#+NAME:   fig:opt-flush
+[[./static/02-optimize-flush-buffer.webm]]
 
 
 ** flicker 

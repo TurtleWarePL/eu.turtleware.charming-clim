@@ -127,19 +127,25 @@
     (update-console-dimensions)))
 
 (defmethod flush-buffer ((buffer vconsole) r1 c1 r2 c2)
+  (set-cursor-position r1 c1)
   (loop with data = (data *console*)
         with max-row-index = (1- (min r2 (array-dimension data 0)))
         with max-col-index = (1- (min c2 (array-dimension data 1)))
         for row-index from (1- r1) upto max-row-index
-        do (loop for col-index from (1- c1) upto max-col-index
+        do (loop with last-fg = nil
+                 with last-bg = nil
+                 for col-index from (1- c1) upto max-col-index
                  do (let ((cell (aref data row-index col-index)))
                       (destructuring-bind (character
                                            (fg.r fg.g fg.b)
                                            (bg.r bg.g bg.b))
                           cell
-                        (set-cursor-position (1+ row-index) (1+ col-index))
-                        (set-foreground-color fg.r fg.g fg.b)
-                        (set-background-color bg.r bg.g bg.b)
+                        (unless (equal last-fg (second cell))
+                          (set-foreground-color fg.r fg.g fg.b)
+                          (setf last-fg (second cell)))
+                        (unless (equal last-bg (third cell))
+                          (set-background-color bg.r bg.g bg.b)
+                          (setf last-bg (third cell)))
                         (put character))))
         finally (finish-output *console-io*)))
 
