@@ -1178,3 +1178,149 @@ In examples fix each use of ~ctl~ and ~out~ where options ~:fgc~ or
                      :rfn (make-noise-renderer (random-color))
                      :fsz (list r1 c1 r2 c2))))
 #+END_SRC
+
+** Optimizing number of writes
+
+In many applications it is the case that only small portion of the
+screen changes between frames. Redrawing each character on the console
+in ~flash-buffer~ is necessary for the full screen noise demo, but
+that isn't a typical case. Since we are I/O bound we'll try to reduce
+number of writes to the terminal by tracing "dirty" cells and
+redrawing only when necessary. We can do that thanks to the function
+~set-cell~.
+
+#+BEGIN_SRC lisp
+  (defclass vcell ()
+    ((ch :initarg :ch :accessor ch)
+     (fg :initarg :fg :accessor fg)
+     (bg :initarg :bg :accessor bg)
+     (dirty-p :initarg :dirty-p :accessor dirty-p))
+    (:default-initargs :ch #\space
+                       :fg (fgc *console*)
+                       :bg (bgc *console*)
+                       :dirty-p t))
+
+  (defun set-cell (cell ch fg bg)
+    (unless (and (char= (ch cell) ch)
+                 (= (fg cell) fg)
+                 (= (bg cell) bg))
+      (setf (ch cell) ch
+            (fg cell) fg
+            (bg cell) bg
+            (dirty-p cell) t)))
+#+END_SRC
+
+
+Writing the cell will be also abstracted with a function ~put-cell~
+which will mark the cell as "clean". Current color will be stored in
+the variable ~*console*~ which may be accessed dynamically. When
+~flush-buffer~ exits, the old colors are restored. When the cell is
+not "dirty" the flush loop will skip. When next "dirty" character
+appears we need to reposition the cursor.
+
+#+BEGIN_SRC lisp
+  (defun put-cell (cell)
+    (let ((ch (ch cell))
+          (bg (bg cell))
+          (fg (fg cell)))
+      (unless (eql (fgc *console*) fg)
+        (set-foreground-color fg)
+        (setf (fgc *console*) fg))
+      (unless (eql (bgc *console*) bg)
+        (set-background-color bg)
+        (setf (bgc *console*) bg))
+      (put ch)
+      (setf (dirty-p cell) nil)))
+
+  (defmethod flush-buffer ((buffer vconsole) r1 c1 r2 c2)
+    (loop with data = (data *console*)
+          with skipped = t
+          with max-row = (min r2 (rows buffer))
+          with max-col = (min c2 (cols buffer))
+          with fgc = (fgc *console*)
+          with bgc = (bgc *console*)
+          for row from r1 upto max-row
+          do (loop for col from c1 upto max-col
+                   for cell = (ref data row col)
+                   if (dirty-p cell)
+                     do (when skipped
+                          (set-cursor-position row col)
+                          (setf skipped nil))
+                        (put-cell cell)
+                   else
+                     do (setf skipped t))
+          finally (finish-output *console-io*)
+                  (unless (eql (fgc *console*) fgc)
+                    (set-foreground-color fgc)
+                    (setf (fgc *console*) fgc))
+                  (unless (eql (bgc *console*) bgc)
+                    (set-background-color bgc)
+                    (setf (bgc *console*) bgc))))
+#+END_SRC
+
+Thanks to this change number of characters written in a demo with
+multiple windows drops from 8000 to 2000-3000. Improvement for a full
+screen noise demo is negligible.
+
+#+CAPTION: Optimize write
+#+NAME:   fig:opt-write
+[[./static/02-optimize-write.webm]]
+
+Now our console is more fragile when it comes to resizes and writes
+from somewhere else. Since we do not redraw cells unknown artifacts
+are not refreshed. Resize may be mitigated in when updating the
+console dimensions by forcing a full refresh. We will also change
+slightly the interface of ~flush-buffer~. ~update-console-dimensions~
+returns now ~t~ when dimensions change (~nil~ otherwise).
+
+#+BEGIN_SRC lisp
+  (defgeneric flush-buffer (buffer &key r1 c1 r2 c2 force))
+
+  (defmacro ctl (&rest operations)
+    #| ... |#
+    (:ffb `(flush-buffer *console* :force t)
+    (:fls `(let ((changed (update-console-dimensions)))
+             (flush-buffer *console* :force changed)))
+    #| ... |#)
+
+  (defun update-console-dimensions ()
+    (with-cursor-position ((expt 2 16) (expt 2 16))
+      (multiple-value-bind (rows cols)
+          (get-cursor-position)
+        (when (and (= (rows *console*) rows)
+                   (= (cols *console*) cols))
+          (return-from update-console-dimensions nil))
+        #|...|#
+    t)
+
+  (defmethod initialize-instance :after
+      ((instance vconsole) &key fgc bgc pos cvp ptr)
+    #|...|#
+    (setf (rows instance) 0)
+    (setf (cols instance) 0)
+    (let ((*console* instance))
+      (update-console-dimensions)))
+
+  (defmethod flush-buffer ((buffer vconsole)
+                           &key
+                             (r1 1)
+                             (c1 1)
+                             (r2 (rows buffer))
+                             (c2 (cols buffer))
+                             (force nil))
+    (loop #|...|#
+      if (or force (dirty-p cell))
+        do #| ... |#
+      else
+        do #| ... |#))
+#+END_SRC
+
+Rogue writes to the stream are the programmer's fault, so we'll only
+add a key binding to trigger a full refresh manually.
+
+#+BEGIN_SRC lisp
+(defun handle-event (fm event)
+  #| ... |#
+  ((keyp event :f5)
+   (ctl (:ffb))))
+#+END_SRC

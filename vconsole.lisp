@@ -1,7 +1,7 @@
 (in-package #:eu.turtleware.charming-clim)
 
 (defvar *console*)
-(defgeneric flush-buffer (buffer r1 c1 r2 c2))
+(defgeneric flush-buffer (buffer &key r1 c1 r2 c2 force))
 
 (defvar *row1* '(1))
 (defvar *col1* '(1))
@@ -52,13 +52,9 @@
                          (:ptr `(setf (ptr *console*) ,@args))
                          (:row `(setf (row *console*) ,@args))
                          (:col `(setf (col *console*) ,@args))
-                         (:fls `(progn
-                                  (update-console-dimensions)
-                                  (flush-buffer *console*
-                                                1
-                                                1
-                                                (rows *console*)
-                                                (cols *console*)))))))))
+                         (:ffb `(flush-buffer *console* :force t))
+                         (:fls `(let ((changed (update-console-dimensions)))
+                                  (flush-buffer *console* :force changed))))))))
 
 (defun clear-rectangle (r1 c1 r2 c2)
   (loop with buf = (data *console*)
@@ -81,6 +77,9 @@
   (with-cursor-position ((expt 2 16) (expt 2 16))
     (multiple-value-bind (rows cols)
         (get-cursor-position)
+      (when (and (= (rows *console*) rows)
+                 (= (cols *console*) cols))
+        (return-from update-console-dimensions nil))
       (setf (rows *console*) rows)
       (setf (cols *console*) cols)
       (destructuring-bind (ar ac) (array-dimensions (data *console*))
@@ -89,7 +88,8 @@
                         (list rows cols)
                         :initial-element nil)))
       (setf *row2* (list rows))
-      (setf *col2* (list cols)))))
+      (setf *col2* (list cols))))
+  t)
 
 (defclass vconsole ()
   ((ios :initarg :ios :accessor ios :documentation "Console I/O stream.")
@@ -122,16 +122,20 @@
   (set-cursor-visibility cvp)
   (set-mouse-tracking ptr)
   (setf (data instance) (make-array (list 0 0) :adjustable t))
+  (setf (rows instance) 0)
+  (setf (cols instance) 0)
   (let ((*console* instance))
     (update-console-dimensions)))
 
 (defclass vcell ()
   ((ch :initarg :ch :accessor ch)
    (fg :initarg :fg :accessor fg)
-   (bg :initarg :bg :accessor bg))
+   (bg :initarg :bg :accessor bg)
+   (dirty-p :initarg :dirty-p :accessor dirty-p))
   (:default-initargs :ch #\space
                      :fg (fgc *console*)
-                     :bg (bgc *console*)))
+                     :bg (bgc *console*)
+                     :dirty-p t))
 
 (defun ref (data row col
             &aux (i0 (1- row)) (i1 (1- col)))
@@ -139,31 +143,57 @@
       (setf (aref data i0 i1) (make-instance 'vcell))))
 
 (defun set-cell (cell ch fg bg)
-  (setf (ch cell) ch
-        (fg cell) fg
-        (bg cell) bg))
+  (unless (and (char= (ch cell) ch)
+               (= (fg cell) fg)
+               (= (bg cell) bg))
+    (setf (ch cell) ch
+          (fg cell) fg
+          (bg cell) bg
+          (dirty-p cell) t)))
 
-(defmethod flush-buffer ((buffer vconsole) r1 c1 r2 c2)
-  (set-cursor-position r1 c1)
+(defun put-cell (cell)
+  (let ((ch (ch cell))
+        (bg (bg cell))
+        (fg (fg cell)))
+    (unless (eql (fgc *console*) fg)
+      (set-foreground-color fg)
+      (setf (fgc *console*) fg))
+    (unless (eql (bgc *console*) bg)
+      (set-background-color bg)
+      (setf (bgc *console*) bg))
+    (put ch)
+    (setf (dirty-p cell) nil)))
+
+(defmethod flush-buffer ((buffer vconsole)
+                         &key
+                           (r1 1)
+                           (c1 1)
+                           (r2 (rows buffer))
+                           (c2 (cols buffer))
+                           (force nil))
   (loop with data = (data *console*)
+        with skipped = t
         with max-row = (min r2 (rows buffer))
         with max-col = (min c2 (cols buffer))
+        with fgc = (fgc *console*)
+        with bgc = (bgc *console*)
         for row from r1 upto max-row
-        do (loop with last-fg = nil
-                 with last-bg = nil
-                 for col from c1 upto max-col
+        do (loop for col from c1 upto max-col
                  for cell = (ref data row col)
-                 do (let ((ch (ch cell))
-                          (fg (fg cell))
-                          (bg (bg cell)))
-                      (unless (eql last-fg fg)
-                        (set-foreground-color fg)
-                        (setf last-fg fg))
-                      (unless (eql last-bg bg)
-                        (set-background-color bg)
-                        (setf last-bg bg))
-                      (put ch)))
-        finally (finish-output *console-io*)))
+                 if (or force (dirty-p cell))
+                   do (when skipped
+                        (set-cursor-position row col)
+                        (setf skipped nil))
+                      (put-cell cell)
+                 else
+                   do (setf skipped t))
+        finally (finish-output *console-io*)
+                (unless (eql (fgc *console*) fgc)
+                  (set-foreground-color fgc)
+                  (setf (fgc *console*) fgc))
+                (unless (eql (bgc *console*) bgc)
+                  (set-background-color bgc)
+                  (setf (bgc *console*) bgc))))
 
 (defmacro with-console ((&rest args
                          &key ios fgc bgc cvp fps &allow-other-keys)

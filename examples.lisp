@@ -33,7 +33,9 @@
            (if (active fm)
                (setf (active fm) nil)
                (alexandria:when-let ((frs (frames fm)))
-                 (setf (active fm) (alexandria:random-elt frs))))))))
+                 (setf (active fm) (alexandria:random-elt frs)))))
+          ((keyp event :f5)
+           (ctl (:ffb))))))
 
 (defun render-window (frame)
   (destructuring-bind (wr1 wc1 wr2 wc2) (fsz frame)
@@ -66,7 +68,7 @@
     (clear-console)
     (loop with fm = (make-instance 'frame-manager)
           with count = 0
-          with fps = :|We are that good!|
+          with fps = :|Good!.00|
           for rows = (rows *console*)
           for cols = (cols *console*)
           for start = (get-internal-real-time)
@@ -89,7 +91,7 @@
              (let* ((stop (get-internal-real-time))
                     (delta (/ (- stop start) internal-time-units-per-second)))
                (if (zerop delta)
-                   (setf fps :|We are that good!|)
+                   (setf fps :|Good!.00|)
                    (setf fps (/ 1.0 delta)))))))
 
 
