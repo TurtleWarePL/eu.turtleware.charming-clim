@@ -1007,4 +1007,174 @@ FPS also increases significantly.
 #+NAME:   fig:opt-flush
 [[./static/02-optimize-flush-buffer.webm]]
 
+** Optimizing the memory use
 
+We will now take a pity on the CPU and the memory. We excessively call
+~adjust-array~ and cons a new list for each written character. We'll
+have the array contents initialized with instances of ~vcell~. Access
+to data buffer will be abstracted away with functions ~ref~ and
+~set-cell~, so we don't need to care about mismatch between array and
+terminal first index elsewhere.
+
+#+BEGIN_SRC lisp
+  (defclass vcell ()
+    ((ch :initarg :ch :accessor ch)
+     (fg :initarg :fg :accessor fg)
+     (bg :initarg :bg :accessor bg))
+    (:default-initargs :ch #\space
+                       :fg (fgc *console*)
+                       :bg (bgc *console*)))
+
+  (defun ref (data row col
+              &aux (i0 (1- row)) (i1 (1- col)))
+    (or (aref data i0 i1)
+        (setf (aref data i0 i1) (make-instance 'vcell))))
+
+  (defun set-cell (cell ch fg bg)
+    (setf (ch cell) ch
+          (fg cell) fg
+          (bg cell) bg))
+#+END_SRC
+
+When the array is too small to hold the screen we'll resize it, when
+the screen is smaller than the array we'll leave it be.
+
+#+BEGIN_SRC lisp
+  (defun update-console-dimensions ()
+    (with-cursor-position ((expt 2 16) (expt 2 16))
+      (multiple-value-bind (rows cols)
+          (get-cursor-position)
+        (setf (rows *console*) rows)
+        (setf (cols *console*) cols)
+        (destructuring-bind (ar ac) (array-dimensions (data *console*))
+          (when (or (> rows ar) (> cols ac))
+            (adjust-array (data *console*)
+                          (list rows cols)
+                          :initial-element nil)))
+        (setf *row2* (list rows))
+        (setf *col2* (list cols)))))
+#+END_SRC
+
+Finally we'll use new operators in operators ~out~, ~clear-rectangle~
+and ~flush-buffer~:
+
+#+BEGIN_SRC lisp
+  (defmacro out ((&key row col fgc bgc) object)
+    "Put an object on a console"
+    `(let ((str (princ-to-string ,object)))
+       (assert (null (find #\newline str)))
+       (let ((row (or ,row (row *console*)))
+             (col (or ,col (col *console*)))
+             (fgc (or ,fgc (fgc *console*)))
+             (bgc (or ,bgc (bgc *console*)))
+             (data (data *console*)))
+         (loop for col from col
+               for ch across str
+               when (inside row col)
+                 do (set-cell (ref data row col) ch fgc bgc)))))
+
+  (defun clear-rectangle (r1 c1 r2 c2)
+    (loop with buf = (data *console*)
+          with fgc = (fgc *console*)
+          with bgc = (bgc *console*)
+          with max-row = (min r2 (array-dimension buf 0))
+          with max-col = (min c2 (array-dimension buf 1))
+          for row from r1 upto max-row
+          do (loop for col from c1 upto max-col
+                   do (set-cell (ref buf row col) #\space fgc bgc))))
+
+  (defmethod flush-buffer ((buffer vconsole) r1 c1 r2 c2)
+    (set-cursor-position r1 c1)
+    (loop with data = (data *console*)
+          with max-row = (min r2 (rows buffer))
+          with max-col = (min c2 (cols buffer))
+          for row from r1 upto max-row
+          do (loop with last-fg = nil
+                   with last-bg = nil
+                   for col from c1 upto max-col
+                   for cell = (ref data row col)
+                   do (let ((ch (ch cell))
+                            (fg (fg cell))
+                            (bg (bg cell)))
+                        (destructuring-bind ((fg.r fg.g fg.b)
+                                             (bg.r bg.g bg.b))
+                            (list fg bg)
+                          (unless (equal last-fg fg)
+                            (set-foreground-color fg.r fg.g fg.b)
+                            (setf last-fg fg))
+                          (unless (equal last-bg bg)
+                            (set-background-color bg.r bg.g bg.b)
+                            (setf last-bg bg))
+                          (put ch))))
+          finally (finish-output *console-io*)))
+#+END_SRC
+
+We still cons back and forth foreground and background colors. From
+now on they will be numbers and not lists. That will also make the
+code more readable.
+
+Low level interface:
+
+#+BEGIN_SRC lisp
+  (defun set-foreground-color (color)
+    (let ((r (ldb '(8 . 16) color))
+          (g (ldb '(8 .  8) color))
+          (b (ldb '(8 .  0) color)))
+      (sgr "38;2;" r ";" g ";" b)))
+
+  (defun set-background-color (color)
+    (let ((r (ldb '(8 . 16) color))
+          (g (ldb '(8 .  8) color))
+          (b (ldb '(8 .  0) color)))
+      (sgr "48;2;" r ";" g ";" b)))
+#+END_SRC
+
+High level interface:
+
+#+BEGIN_SRC lisp
+  (defmacro ctl (&rest operations)
+    #|...|#
+    (:fgc `(setf (fgc *console*) ,@args))
+    (:bgc `(setf (bgc *console*) ,@args)))
+
+  (defclass vconsole ()
+    #|...|#
+    (:default-initargs :fgc #xffa0a0 :bgc #x222222))
+
+  (defmethod flush-buffer ((buffer vconsole) r1 c1 r2 c2)
+    #| ... |#
+    do (let ((ch (ch cell))
+             (fg (fg cell))
+             (bg (bg cell)))
+         (unless (eql last-fg fg)
+           (set-foreground-color fg)
+           (setf last-fg fg))
+         (unless (eql last-bg bg)
+           (set-background-color bg)
+           (setf last-bg bg))
+         (put ch))
+    #| ... |#
+#+END_SRC
+
+In examples fix each use of ~ctl~ and ~out~ where options ~:fgc~ or
+~:bgc~ appear. Also change the ~make-noise-frame~ function:
+
+#+BEGIN_SRC lisp
+  (defun make-noise-frame (r1 c1 r2 c2)
+    (flet ((make-noise-renderer (color)
+             (lambda (frame)
+               (destructuring-bind (r1 c1 r2 c2) (fsz frame)
+                 (loop for row from r1 upto r2
+                       do (loop for col from c1 upto c2
+                                do (out (:row row
+                                         :col col
+                                         :bgc (alexandria:random-elt
+                                               `(#x000000 #x080808))
+                                         :fgc color)
+                                        (alexandria:random-elt '("+" "-"))))))))
+           (random-color ()
+             (random (1+ #xffffff))))
+      (make-instance 'frame
+                     :rfn (make-noise-renderer (random-color))
+                     :fsz (list r1 c1 r2 c2))))
+#+END_SRC

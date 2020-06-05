@@ -41,17 +41,17 @@
     (when (= wr2 (first *row2*))
       (return-from render-window
         (render-frame frame)))
-    (ctl (:bgc #x11 #x11 #x11)
-         (:fgc #xbb #xbb #xbb))
+    (ctl (:bgc #x111111)
+         (:fgc #xbbbbbb))
     (let ((col (1+ wc2)))
-      (out (:row wr1 :col col :fgc '(#xff #x22 #x44)) "x")
+      (out (:row wr1 :col col :fgc #xff2244) "x")
       (out (:row (+ wr1 1) :col col) "o")
       (out (:row (+ wr1 2) :col col) ">")
       (loop for row from (+ wr1 3) upto wr2
             do (out (:row row :col col) " "))
       (out (:row (- wr2 0) :col col) "/"))
-    (ctl (:bgc #x22 #x22 #x22)
-         (:fgc #xbb #xbb #xbb))
+    (ctl (:bgc #x222222)
+         (:fgc #xbbbbbb))
     (render-frame frame)))
 
 (defun display-screen (fm)
@@ -75,15 +75,15 @@
                    until (null ch)
                    do (handle-event fm ch))
           do (display-screen fm)
-             (ctl (:fgc #x22 #x22 #x22)
-                  (:bgc #xbb #xbb #xbb))
+             (ctl (:fgc #x222222)
+                  (:bgc #xffffff))
              (let* ((status (format nil "Rows ~3d, Cols ~3d, FPS ~8,2f, chars ~8d"
                                     (1- rows) cols fps count))
                     (len (length status)))
                (ctl (:clr 1 (min (1+ len) cols) 1 cols))
                (out (:col 1 :row 1) status))
-             (ctl (:fgc #xff #xa0 #xa0)
-                  (:bgc #x22 #x22 #x22))
+             (ctl (:fgc #xffa0a0)
+                  (:bgc #x222222))
           do (ctl (:fls))
              (setf count *count*)
              (let* ((stop (get-internal-real-time))
@@ -112,14 +112,13 @@
                               do (out (:row row
                                        :col col
                                        :bgc (alexandria:random-elt
-                                             `((0 0 0) (8 8 8)))
+                                             `(#x000000 #x080808))
                                        :fgc color)
-                                      (alexandria:random-elt '("+" "-")))))))))
+                                      (alexandria:random-elt '("+" "-"))))))))
+         (random-color ()
+           (random (1+ #xffffff))))
     (make-instance 'frame
-                   :rfn (make-noise-renderer
-                         (list (alexandria:random-elt '(#x22 #x88 #xff))
-                               (alexandria:random-elt '(#x22 #x88 #xff))
-                               (alexandria:random-elt '(#x22 #x88 #xff))))
+                   :rfn (make-noise-renderer (random-color))
                    :fsz (list r1 c1 r2 c2))))
 
 (defun make-animation-frame (r1 c1 r2 c2 speed)
@@ -128,8 +127,8 @@
         (current-row (truncate (+ r1 r2) 2))
         (current-col (+ c1 2)))
     (flet ((draw-square ()
-             (ctl (:bgc #x44 #x44 #x00)
-                  (:fgc #xff #xbb #x00)
+             (ctl (:bgc #x444400)
+                  (:fgc #xffbb00)
                   (:clr r1 c1 r2 c2))
              (let* ((now (get-internal-real-time))
                     (delta (- now last-time))
@@ -162,7 +161,7 @@
                    for row from (1- r1) upto (1+ r2)
                    for id = (- row r1 -2)
                    for string = (format nil "XXX ~d/~d: ~a" id rows str)
-                   do (out (:row row :col col :fgc '(#xff #x88 #x88)) string)))))
+                   do (out (:row row :col col :fgc #xff8888) string)))))
     (make-instance 'frame
                    :rfn #'reporter
                    :fsz (list r1 c1 r2 c2))))

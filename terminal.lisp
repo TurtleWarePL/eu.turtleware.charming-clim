@@ -72,11 +72,17 @@
   ;; 2 - clear entire line
   (csi mode "K"))
 
-(defun set-foreground-color (r g b)
-  (sgr "38;2;" r ";" g ";" b))
+(defun set-foreground-color (color)
+  (let ((r (ldb '(8 . 16) color))
+        (g (ldb '(8 .  8) color))
+        (b (ldb '(8 .  0) color)))
+    (sgr "38;2;" r ";" g ";" b)))
 
-(defun set-background-color (r g b)
-  (sgr "48;2;" r ";" g ";" b))
+(defun set-background-color (color)
+  (let ((r (ldb '(8 . 16) color))
+        (g (ldb '(8 .  8) color))
+        (b (ldb '(8 .  0) color)))
+    (sgr "48;2;" r ";" g ";" b)))
 
 (defun save-cursor-position ()
   (csi "s"))

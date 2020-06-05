@@ -35,11 +35,10 @@
            (fgc (or ,fgc (fgc *console*)))
            (bgc (or ,bgc (bgc *console*)))
            (data (data *console*)))
-       (loop for c from col
-             for s across str
-             when (inside row c)
-               do (setf (aref data (1- row) (1- c))
-                        (list s fgc bgc))))))
+       (loop for col from col
+             for ch across str
+             when (inside row col)
+               do (set-cell (ref data row col) ch fgc bgc)))))
 
 (defmacro ctl (&rest operations)
   `(progn
@@ -47,8 +46,8 @@
              collect (destructuring-bind (name &rest args) op
                        (ecase name
                          (:clr `(clear-rectangle ,@args))
-                         (:fgc `(setf (fgc *console*) (list ,@args)))
-                         (:bgc `(setf (bgc *console*) (list ,@args)))
+                         (:fgc `(setf (fgc *console*) ,@args))
+                         (:bgc `(setf (bgc *console*) ,@args))
                          (:cvp `(setf (cvp *console*) ,@args))
                          (:ptr `(setf (ptr *console*) ,@args))
                          (:row `(setf (row *console*) ,@args))
@@ -65,12 +64,11 @@
   (loop with buf = (data *console*)
         with fgc = (fgc *console*)
         with bgc = (bgc *console*)
-        with max-row-index = (1- (min r2 (array-dimension buf 0)))
-        with max-col-index = (1- (min c2 (array-dimension buf 1)))
-        for row-index from (1- r1) upto max-row-index
-        do (loop for col-index from (1- c1) upto max-col-index
-                 do (setf (aref buf row-index col-index)
-                          (list #\space fgc bgc)))))
+        with max-row = (min r2 (array-dimension buf 0))
+        with max-col = (min c2 (array-dimension buf 1))
+        for row from r1 upto max-row
+        do (loop for col from c1 upto max-col
+                 do (set-cell (ref buf row col) #\space fgc bgc))))
 
 (defun get-cursor-position ()
   (request-cursor-position)
@@ -85,10 +83,11 @@
         (get-cursor-position)
       (setf (rows *console*) rows)
       (setf (cols *console*) cols)
-      (adjust-array (data *console*) (list rows cols)
-                    :initial-element (list #\space
-                                           (fgc *console*)
-                                           (bgc *console*)))
+      (destructuring-bind (ar ac) (array-dimensions (data *console*))
+        (when (or (> rows ar) (> cols ac))
+          (adjust-array (data *console*)
+                        (list rows cols)
+                        :initial-element nil)))
       (setf *row2* (list rows))
       (setf *col2* (list cols)))))
 
@@ -106,8 +105,8 @@
    (rows :accessor rows             :documentation "Terminal number of rows.")
    (cols :accessor cols             :documentation "Terminal number of cols."))
   (:default-initargs :ios (error "I/O stream must be specified.")
-                     :fgc '(#xff #xa0 #xa0)
-                     :bgc '(#x22 #x22 #x22)
+                     :fgc #xffa0a0
+                     :bgc #x222222
                      :row 1
                      :col 1
                      :cvp nil
@@ -117,8 +116,8 @@
 (defmethod initialize-instance :after
     ((instance vconsole) &key fgc bgc pos cvp ptr)
   (setf (hnd instance) (init-console))
-  (apply #'set-foreground-color fgc)
-  (apply #'set-background-color bgc)
+  (set-foreground-color fgc)
+  (set-background-color bgc)
   (set-cursor-position (car pos) (cdr pos))
   (set-cursor-visibility cvp)
   (set-mouse-tracking ptr)
@@ -126,27 +125,44 @@
   (let ((*console* instance))
     (update-console-dimensions)))
 
+(defclass vcell ()
+  ((ch :initarg :ch :accessor ch)
+   (fg :initarg :fg :accessor fg)
+   (bg :initarg :bg :accessor bg))
+  (:default-initargs :ch #\space
+                     :fg (fgc *console*)
+                     :bg (bgc *console*)))
+
+(defun ref (data row col
+            &aux (i0 (1- row)) (i1 (1- col)))
+  (or (aref data i0 i1)
+      (setf (aref data i0 i1) (make-instance 'vcell))))
+
+(defun set-cell (cell ch fg bg)
+  (setf (ch cell) ch
+        (fg cell) fg
+        (bg cell) bg))
+
 (defmethod flush-buffer ((buffer vconsole) r1 c1 r2 c2)
   (set-cursor-position r1 c1)
   (loop with data = (data *console*)
-        with max-row-index = (1- (min r2 (array-dimension data 0)))
-        with max-col-index = (1- (min c2 (array-dimension data 1)))
-        for row-index from (1- r1) upto max-row-index
+        with max-row = (min r2 (rows buffer))
+        with max-col = (min c2 (cols buffer))
+        for row from r1 upto max-row
         do (loop with last-fg = nil
                  with last-bg = nil
-                 for col-index from (1- c1) upto max-col-index
-                 do (let ((cell (aref data row-index col-index)))
-                      (destructuring-bind (character
-                                           (fg.r fg.g fg.b)
-                                           (bg.r bg.g bg.b))
-                          cell
-                        (unless (equal last-fg (second cell))
-                          (set-foreground-color fg.r fg.g fg.b)
-                          (setf last-fg (second cell)))
-                        (unless (equal last-bg (third cell))
-                          (set-background-color bg.r bg.g bg.b)
-                          (setf last-bg (third cell)))
-                        (put character))))
+                 for col from c1 upto max-col
+                 for cell = (ref data row col)
+                 do (let ((ch (ch cell))
+                          (fg (fg cell))
+                          (bg (bg cell)))
+                      (unless (eql last-fg fg)
+                        (set-foreground-color fg)
+                        (setf last-fg fg))
+                      (unless (eql last-bg bg)
+                        (set-background-color bg)
+                        (setf last-bg bg))
+                      (put ch)))
         finally (finish-output *console-io*)))
 
 (defmacro with-console ((&rest args
