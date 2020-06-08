@@ -1,2 +1,4 @@
 static/
 /01-controlling-the-terminal.tar.gz
+*.fasl
+*~
