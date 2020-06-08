@@ -1362,7 +1362,11 @@ the virtual buffer implementation in a file ~vbuffers.lisp~.
      (data :initarg :data :accessor data :documentation "Data buffer")
      (rows :initarg :rows :accessor rows :documentation "Buffer number of rows")
      (cols :initarg :cols :accessor cols :documentation "Buffer number of cols"))
-    (:default-initargs :clip (make-instance 'vclip)))
+    (:default-initargs :fgc #xffa0a0
+                       :bgc #x222222
+                       :row 1
+                       :col 1
+                       :clip (make-instance 'vclip)))
 
   (defclass vcell ()
     ((ch :initarg :ch :accessor ch)
@@ -1522,10 +1526,6 @@ Finally it is time to rewrite the ~vconsole~ implementation.
      (fps :initarg :fps :accessor fps :documentation "Desired framerate.")
      (hnd               :accessor hnd :documentation "Terminal handler."))
     (:default-initargs :ios (error "I/O stream must be specified.")
-                       :fgc #xffa0a0
-                       :bgc #x222222
-                       :row 1
-                       :col 1
                        :cvp nil
                        :ptr t
                        :fps 10))

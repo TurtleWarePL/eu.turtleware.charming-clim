@@ -7,10 +7,6 @@
    (fps :initarg :fps :accessor fps :documentation "Desired framerate.")
    (hnd               :accessor hnd :documentation "Terminal handler."))
   (:default-initargs :ios (error "I/O stream must be specified.")
-                     :fgc #xffa0a0
-                     :bgc #x222222
-                     :row 1
-                     :col 1
                      :cvp nil
                      :ptr t
                      :fps 10))

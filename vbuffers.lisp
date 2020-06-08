@@ -15,7 +15,11 @@
    (data :initarg :data :accessor data :documentation "Data buffer")
    (rows :initarg :rows :accessor rows :documentation "Buffer number of rows")
    (cols :initarg :cols :accessor cols :documentation "Buffer number of cols"))
-  (:default-initargs :clip (make-instance 'vclip)))
+  (:default-initargs :fgc #xffa0a0
+                     :bgc #x222222
+                     :row 1
+                     :col 1
+                     :clip (make-instance 'vclip)))
 
 (defclass vcell ()
   ((ch :initarg :ch :accessor ch)
