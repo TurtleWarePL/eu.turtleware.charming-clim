@@ -334,9 +334,7 @@ manually. Since we are at it, we will add a few more escape sequences:
                do (cursor-right))))
 #+END_SRC
 
-* Rethinking output
-
-** Analysis
+* Benchmarking output
 
 When we render the noise demo on the area 80x24 the frame rate is very
 unimpressive – around 40 fps. We can't write games like this!  We'll
@@ -535,7 +533,7 @@ Sometimes changing color is not necessary, because it does not change
 from cell to cell. For instance in the noise demo the foreground color
 doesn't change and only the background color is picked randomly.
 
-** Refining interfaces
+* Refining interfaces
 
 Being able to draw anywhere on the screen with color is certainly
 useful feature and demanding from the programmer to print only to
@@ -634,7 +632,7 @@ A new system definition should look like this:
 Before going further make sure that the system works the same as
 previously. Such refactors are prone to typos and omissions.
 
-** Virtual console
+* Virtual console
 
 We've already introduced the class ~console~ which is a layer of
 indirection for a terminal access. We will extend this concept into
@@ -957,7 +955,7 @@ the array in the ~(ctl (:fls))~. This is a very nice side effect.
 #+NAME:   fig:vconsole
 [[./static/02-vconsole.webm]]
 
-** Optimizing flush-buffer
+* Optimizing flush-buffer
 
 Our improvements caused that our rendering is smooth. On the other
 hand, we always exhibit the worst case scenario regardless of a
@@ -1007,12 +1005,12 @@ FPS also increases significantly.
 #+NAME:   fig:opt-flush
 [[./static/02-optimize-flush-buffer.webm]]
 
-** Optimizing the memory use
+* Optimizing the memory use
 
 We will now take a pity on the CPU and the memory. We excessively call
 ~adjust-array~ and cons a new list for each written character. We'll
 have the array contents initialized with instances of ~vcell~. Access
-to data buffer will be abstracted away with functions ~ref~ and
+to data buffer will be abstracted away with functions ~get-cell~ and
 ~set-cell~, so we don't need to care about mismatch between array and
 terminal first index elsewhere.
 
@@ -1025,8 +1023,8 @@ terminal first index elsewhere.
                        :fg (fgc *console*)
                        :bg (bgc *console*)))
 
-  (defun ref (data row col
-              &aux (i0 (1- row)) (i1 (1- col)))
+  (defun get-cell (data row col
+                   &aux (i0 (1- row)) (i1 (1- col)))
     (or (aref data i0 i1)
         (setf (aref data i0 i1) (make-instance 'vcell))))
 
@@ -1071,7 +1069,7 @@ and ~flush-buffer~:
          (loop for col from col
                for ch across str
                when (inside row col)
-                 do (set-cell (ref data row col) ch fgc bgc)))))
+                 do (set-cell (get-cell data row col) ch fgc bgc)))))
 
   (defun clear-rectangle (r1 c1 r2 c2)
     (loop with buf = (data *console*)
@@ -1081,7 +1079,7 @@ and ~flush-buffer~:
           with max-col = (min c2 (array-dimension buf 1))
           for row from r1 upto max-row
           do (loop for col from c1 upto max-col
-                   do (set-cell (ref buf row col) #\space fgc bgc))))
+                   do (set-cell (get-cell buf row col) #\space fgc bgc))))
 
   (defmethod flush-buffer ((buffer vconsole) r1 c1 r2 c2)
     (set-cursor-position r1 c1)
@@ -1092,7 +1090,7 @@ and ~flush-buffer~:
           do (loop with last-fg = nil
                    with last-bg = nil
                    for col from c1 upto max-col
-                   for cell = (ref data row col)
+                   for cell = (get-cell data row col)
                    do (let ((ch (ch cell))
                             (fg (fg cell))
                             (bg (bg cell)))
@@ -1179,7 +1177,7 @@ In examples fix each use of ~ctl~ and ~out~ where options ~:fgc~ or
                      :fsz (list r1 c1 r2 c2))))
 #+END_SRC
 
-** Optimizing number of writes
+* Optimizing number of writes
 
 In many applications it is the case that only small portion of the
 screen changes between frames. Redrawing each character on the console
@@ -1241,7 +1239,7 @@ appears we need to reposition the cursor.
           with bgc = (bgc *console*)
           for row from r1 upto max-row
           do (loop for col from c1 upto max-col
-                   for cell = (ref data row col)
+                   for cell = (get-cell data row col)
                    if (dirty-p cell)
                      do (when skipped
                           (set-cursor-position row col)
@@ -1323,4 +1321,324 @@ add a key binding to trigger a full refresh manually.
   #| ... |#
   ((keyp event :f5)
    (ctl (:ffb))))
+#+END_SRC
+
+* Virtual buffers
+
+To prepare for upcoming changes we'll do a refactor. ~vconsole~ will
+be broken into ~vbuffer~ superclass responsible for the output and
+~vconsole~ representing the terminal. Current output sink will be
+designated by a special variable ~*buffer*~.
+
+Cell manipulation is abstracted with a small protocol specialized on
+the buffer. Internal representation of a cell is expected to be known
+by the ~flush-buffer~ implementer.
+
+- (get-cell buffer row col) :: returns a specified cell
+- (put-cell buffer row col) :: flushes a specified cell
+- (set-cell buffer row col) :: changes a specified cell
+
+~with-clipping~ will be remodeled to accept the buffer as the first
+argument. Instead of operating on dynamic bindings we'll encapsulate
+the clipping object in an instance of a class ~vclip~. This is pretty
+inflexible now, but reworking ~with-clipping~ to have underlying
+~invoke-with-clipping~ generic function called with a continuation
+instead would be trivial. We just don't need that for now. We'll put
+the virtual buffer implementation in a file ~vbuffers.lisp~.
+
+#+BEGIN_SRC lisp
+  (defgeneric get-cell (buffer row col))
+  (defgeneric put-cell (buffer row col))
+  (defgeneric set-cell (buffer row col ch fg bg))
+  (defgeneric inside-p (buffer row col))
+  (defgeneric flush-buffer (buffer &key r1 c1 r2 c2 force))
+
+  (defclass vbuffer ()
+    ((fgc  :initarg :fgc  :accessor fgc  :documentation "Foregorund color")
+     (bgc  :initarg :bgc  :accessor bgc  :documentation "Background color")
+     (row  :initarg :row  :accessor row  :documentation "Current row")
+     (col  :initarg :col  :accessor col  :documentation "Current col")
+     (clip :initarg :clip :accessor clip :documentation "Clipping object")
+     (data :initarg :data :accessor data :documentation "Data buffer")
+     (rows :initarg :rows :accessor rows :documentation "Buffer number of rows")
+     (cols :initarg :cols :accessor cols :documentation "Buffer number of cols"))
+    (:default-initargs :clip (make-instance 'vclip)))
+
+  (defclass vcell ()
+    ((ch :initarg :ch :accessor ch)
+     (fg :initarg :fg :accessor fg)
+     (bg :initarg :bg :accessor bg)
+     (dirty-p :initarg :dirty-p :accessor dirty-p))
+    (:default-initargs :ch #\space
+                       :fg (fgc *buffer*)
+                       :bg (bgc *buffer*)
+                       :dirty-p t))
+
+  (defmethod get-cell ((buf vbuffer) row col)
+    (let ((data (data buf))
+          (i0 (1- row))
+          (i1 (1- col)))
+      (or (aref data i0 i1)
+          (setf (aref data i0 i1) (make-instance 'vcell)))))
+
+  (defmethod put-cell ((buf vbuffer) row col)
+    (let ((cell (get-cell buf row col)))
+      (setf (dirty-p cell) nil)))
+
+  (defmethod set-cell ((buf vbuffer) row col ch fg bg)
+    (let ((cell (get-cell buf row col)))
+      (unless (and (eql (ch cell) ch)
+                   (eql (fg cell) fg)
+                   (eql (bg cell) bg))
+        (setf (ch cell) ch
+              (fg cell) fg
+              (bg cell) bg
+              (dirty-p cell) t))))
+
+  (defclass vclip ()
+    ((r1 :initarg :r1 :accessor r1)
+     (c1 :initarg :c1 :accessor c1)
+     (r2 :initarg :r2 :accessor r2)
+     (c2 :initarg :c2 :accessor c2)
+     (fn :initarg :fn :accessor fn))
+    (:default-initargs :r1 1
+                       :c1 1
+                       :r2 24
+                       :c2 80
+                       :fn (constantly t)))
+
+  (defmethod inside-p ((buffer vbuffer) row col)
+    (let ((clip (clip buffer)))
+      (and (<= (r1 clip) row (r2 clip))
+           (<= (c1 clip) col (c2 clip))
+           (funcall (fn clip) row col))))
+
+  (defmacro with-clipping ((buffer &key r1 c1 r2 c2 fn) &body body)
+    (alexandria:with-gensyms (row1 col1 row2 col2 fun)
+      `(let ((clip (clip ,buffer)))
+         (let (,@(when r1 `((,row1 (r1 clip))))
+               ,@(when c1 `((,col1 (c1 clip))))
+               ,@(when r2 `((,row2 (r2 clip))))
+               ,@(when c2 `((,col2 (c2 clip))))
+               ,@(when fn `((,fun  (fn clip)))))
+           (unwind-protect
+                (progn ,@(when r1 `((setf (r1 clip) (max ,row1 ,r1))))
+                       ,@(when c1 `((setf (c1 clip) (max ,col1 ,c1))))
+                       ,@(when r2 `((setf (r2 clip) (min ,row2 ,r2))))
+                       ,@(when c2 `((setf (c2 clip) (min ,col2 ,c2))))
+                       ,@(when fn `((setf (fn clip)
+                                          (lambda (row col)
+                                            (and (funcall ,fun row col)
+                                                 (funcall ,fn row col))))))
+                       ,@body)
+             ,@(when r1 `((setf (r1 clip) ,row1)))
+             ,@(when c1 `((setf (c1 clip) ,col1)))
+             ,@(when r2 `((setf (r2 clip) ,row2)))
+             ,@(when c2 `((setf (c2 clip) ,col2)))
+             ,@(when fn `((setf (fn clip) ,fn))))))))
+#+END_SRC
+
+Operators ~out~ and ~ctl~ now operate on a dynamic variable
+~*buffer*~. Thanks to that the abstraction will remain the same
+regardless of the context. Also it will be possible to work on
+multiple buffers by rebinding the variable.
+
+#+BEGIN_SRC lisp
+  (defvar *buffer*)
+
+  (defmacro with-buffer ((object) &body body)
+    `(let ((*buffer* ,object))
+       ,@body))
+
+  (defun clear-rectangle (r1 c1 r2 c2)
+    (loop with buf = *buffer*
+          with fgc = (fgc buf)
+          with bgc = (bgc buf)
+          with max-row = (min r2 (rows buf))
+          with max-col = (min c2 (cols buf))
+          for row from r1 upto max-row
+          do (loop for col from c1 upto max-col
+                   do (set-cell buf row col #\space fgc bgc))))
+
+  (defmacro out ((&key row col fgc bgc) object)
+    `(let ((str (princ-to-string ,object)))
+       (assert (null (find #\newline str)))
+       (let* ((buf *buffer*)
+              (row (or ,row (row buf)))
+              (col (or ,col (col buf)))
+              (fgc (or ,fgc (fgc buf)))
+              (bgc (or ,bgc (bgc buf))))
+         (loop for col from col
+               for ch across str
+               when (inside-p buf row col)
+                 do (set-cell buf row col ch fgc bgc)))))
+
+  (defmacro ctl (&rest operations)
+    `(progn
+       ,@(loop for op in operations
+               collect (destructuring-bind (name &rest args) op
+                         (ecase name
+                           (:clr `(clear-rectangle ,@args))
+                           (:fgc `(setf (fgc *buffer*) ,@args))
+                           (:bgc `(setf (bgc *buffer*) ,@args))
+                           (:cvp `(setf (cvp *buffer*) ,@args))
+                           (:ptr `(setf (ptr *buffer*) ,@args))
+                           (:row `(setf (row *buffer*) ,@args))
+                           (:col `(setf (col *buffer*) ,@args))
+                           (:ffb `(flush-buffer *buffer* :force t))
+                           (:fls `(flush-buffer *buffer* :force nil)))))))
+#+END_SRC
+
+We've introduced two incompatibilities which affect examples: we've
+removed a variable ~*row2*~ and we've stopped calling
+~update-console-dimensions~ in the operation ~:fls~. Time to update
+~examples.lisp~:
+
+#+BEGIN_SRC lisp
+  (defun render-window (frame)
+    #|...|#
+    (when (= wr2 (r2 (clip *console*)))
+      (return-from render-window
+        (render-frame frame)))
+    #|...|#)
+
+  (defun start-display ()
+    (loop
+      #|...|#
+      do (loop for ch = (read-input)
+               until (null ch)
+               do (handle-event fm ch))
+      do (update-console-dimensions)
+      #|...|#))
+#+END_SRC
+
+Finally it is time to rewrite the ~vconsole~ implementation.
+
+#+BEGIN_SRC lisp
+  (defclass vconsole (vbuffer)
+    ((ios :initarg :ios :accessor ios :documentation "Console I/O stream.")
+     (cvp :initarg :cvp :accessor cvp :documentation "Cursor visibility.")
+     (ptr :initarg :ptr :accessor ptr :documentation "Pointer tracking.")
+     (fps :initarg :fps :accessor fps :documentation "Desired framerate.")
+     (hnd               :accessor hnd :documentation "Terminal handler."))
+    (:default-initargs :ios (error "I/O stream must be specified.")
+                       :fgc #xffa0a0
+                       :bgc #x222222
+                       :row 1
+                       :col 1
+                       :cvp nil
+                       :ptr t
+                       :fps 10))
+
+  (defmethod initialize-instance :after
+      ((instance vconsole) &key fgc bgc row col cvp ptr)
+    (setf (hnd instance) (init-console))
+    (set-foreground-color fgc)
+    (set-background-color bgc)
+    (set-cursor-position row col)
+    (set-cursor-visibility cvp)
+    (set-mouse-tracking ptr)
+    (setf (data instance) (make-array (list 0 0) :adjustable t))
+    (setf (rows instance) 0)
+    (setf (cols instance) 0)
+    (let ((*console* instance))
+      (update-console-dimensions)))
+#+END_SRC
+
+We keep the variable ~*console*~ separate from a variable ~*buffer*~
+in case of a need to access the terminal (and not "the current"
+buffer). ~get-cursor-position~ is the cause of the input processing
+flakiness - it consumes events which it doesn't recognize - we'll
+tackle this problem in the next part of the tutorial. When the
+terminal dimensions change, we force a full repaint of the buffer to
+avoid corruption due to line wrap.
+
+#+BEGIN_SRC lisp
+  (defvar *console*)
+  (defmacro with-console ((&rest args
+                           &key ios fgc bgc cvp fps &allow-other-keys)
+                          &body body)
+    (declare (ignore fgc bgc cvp fps))
+    `(let* ((*console-io* ,ios)
+            (*console* (make-instance 'vconsole ,@args)))
+       (unwind-protect (with-buffer (*console*) ,@body)
+         (close-console (hnd *console*)))))
+
+  (defun get-cursor-position ()
+    (request-cursor-position)
+    (finish-output *console-io*)
+    (handler-case (loop (read-input))
+      (cursor-position-report (c)
+        (values (row c) (col c)))))
+
+  (defun update-console-dimensions ()
+    (with-cursor-position ((expt 2 16) (expt 2 16))
+      (multiple-value-bind (rows cols)
+          (get-cursor-position)
+        (let* ((console *console*)
+               (clip (clip console)))
+          (when (and (= (rows console) rows)
+                     (= (cols console) cols))
+            (return-from update-console-dimensions nil))
+          (setf (rows console) rows)
+          (setf (cols console) cols)
+          (destructuring-bind (ar ac) (array-dimensions (data console))
+            (when (or (/= rows ar) (/= cols ac))
+              (when (or (> rows ar) (> cols ac))
+                (adjust-array (data console)
+                              (list rows cols)
+                              :initial-element nil))
+              (with-buffer (console)
+                (ctl (:ffb)))))
+          (setf (r2 clip) rows)
+          (setf (c2 clip) cols))))
+    t)
+#+END_SRC
+
+And implement ~vbuffer~ methods. Both are specific to the console
+because they call functions from the lower level abstraction.
+
+#+BEGIN_SRC lisp
+(defmethod put-cell ((buf vconsole) row col)
+  (let* ((cell (get-cell buf row col))
+         (ch (ch cell))
+         (bg (bg cell))
+         (fg (fg cell)))
+    (unless (eql (fgc buf) fg)
+      (set-foreground-color fg)
+      (setf (fgc buf) fg))
+    (unless (eql (bgc buf) bg)
+      (set-background-color bg)
+      (setf (bgc buf) bg))
+    (put ch)
+    (setf (dirty-p cell) nil)))
+
+(defmethod flush-buffer ((buf vconsole)
+                         &key
+                           (r1 1)
+                           (c1 1)
+                           (r2 (rows buf))
+                           (c2 (cols buf))
+                           (force nil))
+  (loop with skipped = t
+        with max-row = (min r2 (rows buf))
+        with max-col = (min c2 (cols buf))
+        with fgc = (fgc *console*)
+        with bgc = (bgc *console*)
+        for row from r1 upto max-row
+        do (loop for col from c1 upto max-col
+                 if (or force (dirty-p (get-cell buf row col)))
+                   do (when skipped
+                        (set-cursor-position row col)
+                        (setf skipped nil))
+                      (put-cell buf row col)
+                 else
+                   do (setf skipped t))
+        finally (finish-output *console-io*)
+                (unless (eql (fgc buf) fgc)
+                  (set-foreground-color fgc)
+                  (setf (fgc buf) fgc))
+                (unless (eql (bgc buf) bgc)
+                  (set-background-color bgc)
+                  (setf (bgc buf) bgc))))
 #+END_SRC

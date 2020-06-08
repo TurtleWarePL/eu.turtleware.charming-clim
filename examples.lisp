@@ -40,7 +40,7 @@
 (defun render-window (frame)
   (destructuring-bind (wr1 wc1 wr2 wc2) (fsz frame)
     (declare (ignore wc1))
-    (when (= wr2 (first *row2*))
+    (when (= wr2 (r2 (clip *console*)))
       (return-from render-window
         (render-frame frame)))
     (ctl (:bgc #x111111)
@@ -76,6 +76,7 @@
           do (loop for ch = (read-input)
                    until (null ch)
                    do (handle-event fm ch))
+          do (update-console-dimensions)
           do (display-screen fm)
              (ctl (:fgc #x222222)
                   (:bgc #xffffff))
@@ -102,7 +103,7 @@
 
 (defun render-frame (frame)
   (destructuring-bind (r1 c1 r2 c2) (fsz frame)
-    (with-clipping (:row1 r1 :col1 c1 :row2 r2 :col2 c2)
+    (with-clipping (*console* :r1 r1 :c1 c1 :r2 r2 :c2 c2)
       (funcall (rfn frame) frame))))
 
 (defun make-noise-frame (r1 c1 r2 c2)
