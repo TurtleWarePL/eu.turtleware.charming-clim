@@ -36,4 +36,5 @@
                (:file "terminal" :depends-on ("raw-mode" "packages"))
                (:file "vbuffers" :depends-on ("packages"))
                (:file "vconsole" :depends-on ("packages" "terminal" "vbuffers"))
-               (:file "examples" :depends-on ("terminal" "vconsole"))))
+               (:file "surfaces" :depends-on ("packages" "vbuffers"))
+               (:file "examples" :depends-on ("terminal" "vconsole" "surfaces"))))
