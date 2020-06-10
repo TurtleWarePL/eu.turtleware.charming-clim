@@ -38,11 +38,7 @@
            (ctl (:ffb))))))
 
 (defun render-window (frame)
-  (destructuring-bind (wr1 wc1 wr2 wc2) (fsz frame)
-    (declare (ignore wc1))
-    (when (= wr2 (r2 (clip *console*)))
-      (return-from render-window
-        (render-frame frame)))
+  (multiple-value-bind (wr1 wc1 wr2 wc2) (fsz frame)
     (ctl (:bgc #x111111)
          (:fgc #xbbbbbb))
     (let ((col (1+ wc2)))
@@ -52,8 +48,6 @@
       (loop for row from (+ wr1 3) upto wr2
             do (out (:row row :col col) " "))
       (out (:row (- wr2 0) :col col) "/"))
-    (ctl (:bgc #x222222)
-         (:fgc #xbbbbbb))
     (render-frame frame)))
 
 (defun display-screen (fm)
@@ -97,53 +91,59 @@
 
 
 
-(defclass frame ()
-  ((rfn :initarg :rfn :accessor rfn :documentation "Rendering function.")
-   (fsz :initarg :fsz :accessor fsz :documentation "Frame dimensions.")))
+(defclass frame (surface)
+  ((rfn :initarg :rfn :accessor rfn :documentation "Rendering function."))
+  (:default-initargs :vbuf *console*))
+
+(defun fsz (frame)
+  (values (r1 frame) (c1 frame) (r2 frame) (c2 frame)))
 
 (defun render-frame (frame)
-  (destructuring-bind (r1 c1 r2 c2) (fsz frame)
-    (with-clipping (*console* :r1 r1 :c1 c1 :r2 r2 :c2 c2)
-      (funcall (rfn frame) frame))))
+  (with-buffer (frame)
+    (funcall (rfn frame) frame)
+    (ctl (:fls))))
 
 (defun make-noise-frame (r1 c1 r2 c2)
   (flet ((make-noise-renderer (color)
            (lambda (frame)
-             (destructuring-bind (r1 c1 r2 c2) (fsz frame)
-               (loop for row from r1 upto r2
-                     do (loop for col from c1 upto c2
-                              do (out (:row row
-                                       :col col
-                                       :bgc (alexandria:random-elt
-                                             `(#x000000 #x080808))
-                                       :fgc color)
-                                      (alexandria:random-elt '("+" "-"))))))))
+             (loop for row from 1 upto (rows frame)
+                   do (loop for col from 1 upto (cols frame)
+                            do (out (:row row
+                                     :col col
+                                     :bgc (alexandria:random-elt
+                                           `(#x000000 #x080808))
+                                     :fgc color)
+                                    (alexandria:random-elt '("+" "-")))))))
          (random-color ()
            (random (1+ #xffffff))))
     (make-instance 'frame
                    :rfn (make-noise-renderer (random-color))
-                   :fsz (list r1 c1 r2 c2))))
+                   :r1 r1 :c1 c1 :r2 r2 :c2 c2
+                   :rows (1+ (- r2 r1))
+                   :cols (1+ (- c2 c1)))))
 
 (defun make-animation-frame (r1 c1 r2 c2 speed)
-  (let ((last-time (get-internal-real-time))
-        (dc 1)
-        (current-row (truncate (+ r1 r2) 2))
-        (current-col (+ c1 2)))
+  (let* ((last-time (get-internal-real-time))
+         (dc 1)
+         (cols (1+ (- c2 c1)))
+         (rows (1+ (- r2 r1)))
+         (current-row (1+ (truncate rows 2)))
+         (current-col 2))
     (flet ((draw-square ()
              (ctl (:bgc #x444400)
                   (:fgc #xffbb00)
-                  (:clr r1 c1 r2 c2))
+                  (:clr 1 1 rows cols))
              (let* ((now (get-internal-real-time))
                     (delta (- now last-time))
                     (seconds (/ delta internal-time-units-per-second)))
                (incf current-col (* seconds speed dc))
                (setf last-time now))
-             (cond ((>= (+ current-col 2) c2)
+             (cond ((>= (+ current-col 2) cols)
                     (setf dc -1))
-                   ((<= (- current-col 2) c1)
+                   ((<= (- current-col 2) 1)
                     (setf dc +1)))
              (setf current-col
-                   (alexandria:clamp current-col (+ c1 2) (- c2 2)))
+                   (alexandria:clamp current-col 2 (- cols 2)))
              (loop with row = current-row
                    with col = (round current-col)
                    for r from (1- row) upto (1+ row)
@@ -153,18 +153,24 @@
                      :rfn (lambda (frame)
                             (declare (ignore frame))
                             (draw-square))
-                     :fsz (list r1 c1 r2 c2)))))
+                     :r1 r1 :c1 c1 :r2 r2 :c2 c2
+                     :rows rows
+                     :cols cols))))
 
-(defun make-report-frame (r1 c1 r2 c2)
+(defun make-report-frame (r1 c1 r2 c2 &optional (rows 10))
   (flet ((reporter (frame)
            (declare (ignore frame))
-           (let ((str "I would like to report an event here!"))
-             (loop with rows = (+ (- r2 r1) 3)
-                   with col = (- c1 2)
-                   for row from (1- r1) upto (1+ r2)
-                   for id = (- row r1 -2)
-                   for string = (format nil "XXX ~d/~d: ~a" id rows str)
-                   do (out (:row row :col col :fgc #xff8888) string)))))
+           (let ((str "I'd like to report an event here!"))
+             (ctl (:bgc #x000000))
+             (clear-rectangle 1 1 rows 50)
+             (loop for row from 1 upto rows
+                   for id from 0
+                   for string = (format nil "XXX ~d/~d: ~a" id (1- rows) str)
+                   do (out (:row row :col 1 :fgc #xff8888) string)))))
     (make-instance 'frame
-                   :rfn #'reporter
-                   :fsz (list r1 c1 r2 c2))))
+                   :rfn #'reporter :vbuf *console*
+                   :r1 r1 :c1 c1 :r2 r2 :c2 c2
+                   ;; :row0 3
+                   ;; :col0 2
+                   :rows rows
+                   :cols 50)))
