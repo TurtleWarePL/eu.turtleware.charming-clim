@@ -193,7 +193,5 @@
     (make-instance 'frame
                    :rfn #'reporter :vbuf *console*
                    :r1 r1 :c1 c1 :r2 r2 :c2 c2
-                   ;; :row0 3
-                   ;; :col0 2
                    :rows rows
                    :cols 50)))
