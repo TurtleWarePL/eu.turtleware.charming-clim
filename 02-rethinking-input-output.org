@@ -1948,16 +1948,26 @@ scroll buffers.
      (alexandria:when-let ((frame (active fm)))
        (scroll-buffer frame 4 0))))
 
-  (defun render-window (frame activep)
+  (defun render-options (frame)
     (multiple-value-bind (wr1 wc1 wr2 wc2) (fsz frame)
-      (ctl (:bgc (if activep #x444488 #x111111))
-           (:fgc (if activep #xffffff #xbbbbbb)))
-      (clear-rectangle wr1 wc1 wr2 (1+ wc2))
       (let ((col (1+ wc2)))
         (out (:row wr1 :col col :fgc #xff2244) "x")
         (out (:row (+ wr1 1) :col col) "o")
         (out (:row (+ wr1 2) :col col) ">")
-        (out (:row (- wr2 0) :col col) "/"))
+        (loop for row from (+ wr1 3) upto (- wr2 2)
+              do (out (:row row :col col) " "))
+        (if (or (> (rows frame) (1+ (- wr2 wr1)))
+                (> (cols frame) (1+ (- wc2 wc1))))
+            (out (:row (1- wr2) :col col) "&")
+            (out (:row (1- wr2) :col col) " "))
+        (out (:row wr2 :col col) "/"))))
+
+  (defun render-window (frame activep)
+    (multiple-value-bind (wr1 wc1 wr2 wc2) (fsz frame)
+      (ctl (:bgc (if activep #x444488 #x111111))
+           (:fgc (if activep #xffffff #xbbbbbb)))
+      (clear-rectangle wr1 wc1 wr2 wc2)
+      (render-options frame)
       (render-frame frame)))
 
   (defun display-screen (fm)
@@ -1968,3 +1978,8 @@ scroll buffers.
       (when active
         (render-window active t))))
 #+END_SRC
+
+#+CAPTION: Scrolling a buffer
+#+NAME:   fig:scrolling
+[[./static/02-scrolling.webm]]
+

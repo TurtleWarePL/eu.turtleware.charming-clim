@@ -65,19 +65,18 @@
   (let ((*console* instance))
     (update-console-dimensions)))
 
-(defmethod put-cell ((buf vconsole) row col)
-  (let* ((cell (get-cell buf row col))
-         (ch (ch cell))
-         (bg (bg cell))
-         (fg (fg cell)))
-    (unless (eql (fgc buf) fg)
-      (set-foreground-color fg)
-      (setf (fgc buf) fg))
-    (unless (eql (bgc buf) bg)
-      (set-background-color bg)
-      (setf (bgc buf) bg))
-    (put ch)
-    (setf (dirty-p cell) nil)))
+(defmethod put-cell ((buf vconsole) row col ch fg bg)
+  (when (member (rend buf) '(:dir :bth))
+    (set-cursor-position row col)
+    (set-foreground-color fg)
+    (set-background-color bg))
+  (unless (eql (fgc buf) fg)
+    (set-foreground-color fg)
+    (setf (fgc buf) fg))
+  (unless (eql (bgc buf) bg)
+    (set-background-color bg)
+    (setf (bgc buf) bg))
+  (put ch))
 
 (defmethod flush-buffer ((buf vconsole)
                          &key
@@ -93,11 +92,13 @@
         with bgc = (bgc *console*)
         for row from r1 upto max-row
         do (loop for col from c1 upto max-col
-                 if (or force (dirty-p (get-cell buf row col)))
+                 for cell = (get-cell buf row col)
+                 if (or force (dirty-p cell))
                    do (when skipped
                         (set-cursor-position row col)
                         (setf skipped nil))
-                      (put-cell buf row col)
+                      (put-cell buf row col (ch cell) (fg cell) (bg cell))
+                      (setf (dirty-p cell) nil)
                  else
                    do (setf skipped t))
         finally (finish-output *console-io*)

@@ -26,19 +26,20 @@
                                :adjustable t
                                :initial-element nil)))
 
-(defmethod put-cell ((buf surface) row col)
-  (let* ((vrow (1- (+ (r1 buf) (- (row0 buf)) row)))
-         (vcol (1- (+ (c1 buf) (- (col0 buf)) col)))
-         (cell (get-cell buf row col)))
+(defmethod put-cell ((buf surface) row col ch fg bg)
+  (let ((vrow (1- (+ (r1 buf) (- (row0 buf)) row)))
+        (vcol (1- (+ (c1 buf) (- (col0 buf)) col))))
     (when (and (<= (r1 buf) vrow (r2 buf))
                (<= (c1 buf) vcol (c2 buf)))
-      (set-cell (vbuf buf) vrow vcol (ch cell) (fg cell) (bg cell)))
-    (setf (dirty-p cell) nil)))
+      (set-cell (vbuf buf) vrow vcol ch fg bg))))
 
 (defmethod flush-buffer ((buffer surface) &key r1 c1 r2 c2 force)
   (loop for row from 1 upto (rows buffer)
         do (loop for col from 1 upto (cols buffer)
-                 do (put-cell buffer row col))))
+                 for cell = (get-cell buffer row col)
+                 when (or force (dirty-p cell))
+                   do (put-cell buffer row col (ch cell) (fg cell) (bg cell))
+                      (setf (dirty-p cell) nil))))
 
 (defun move-to-row (buf row0)
   (let* ((rows (rows buf))

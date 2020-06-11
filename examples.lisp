@@ -10,7 +10,8 @@
            (setf (frames fm) nil
                  (active fm) nil)
            (update-console-dimensions)
-           (clear-rectangle 1 1 (rows *console*) (cols *console*))))
+           (clear-rectangle 1 1 (rows *console*) (cols *console*))
+           (ctl (:fls))))
     (cond ((keyp event #\Q :c)
            (cl-user::quit))
           ((keyp event #\R :c)
@@ -21,7 +22,8 @@
                  (list (make-noise-frame 4  2 12 20)
                        (make-noise-frame 6 12 14 30)
                        (make-animation-frame 4 36 10 78 20)
-                       (make-report-frame 18 10 23 20))))
+                       (make-report-frame 18 10 23 20 100)
+                       (make-report-frame 28 15 50 120 10))))
           ((keyp event #\M :c)
            (reset)
            (setf (frames fm)
@@ -59,16 +61,27 @@
            (alexandria:when-let ((frame (active fm)))
              (scroll-buffer frame 4 0))))))
 
-(defun render-window (frame activep)
+(defun render-options (frame)
   (multiple-value-bind (wr1 wc1 wr2 wc2) (fsz frame)
-    (ctl (:bgc (if activep #x444488 #x111111))
-         (:fgc (if activep #xffffff #xbbbbbb)))
-    (clear-rectangle wr1 wc1 wr2 (1+ wc2))
     (let ((col (1+ wc2)))
       (out (:row wr1 :col col :fgc #xff2244) "x")
       (out (:row (+ wr1 1) :col col) "o")
       (out (:row (+ wr1 2) :col col) ">")
-      (out (:row (- wr2 0) :col col) "/"))
+
+      (loop for row from (+ wr1 3) upto (- wr2 2)
+            do (out (:row row :col col) " "))
+      (if (or (> (rows frame) (1+ (- wr2 wr1)))
+              (> (cols frame) (1+ (- wc2 wc1))))
+          (out (:row (1- wr2) :col col) "&")
+          (out (:row (1- wr2) :col col) " "))
+      (out (:row wr2 :col col) "/"))))
+
+(defun render-window (frame activep)
+  (multiple-value-bind (wr1 wc1 wr2 wc2) (fsz frame)
+    (ctl (:bgc (if activep #x444488 #x111111))
+         (:fgc (if activep #xffffff #xbbbbbb)))
+    (clear-rectangle wr1 wc1 wr2 wc2)
+    (render-options frame)
     (render-frame frame)))
 
 (defun display-screen (fm)
@@ -93,7 +106,7 @@
           do (loop for ch = (read-input)
                    until (null ch)
                    do (handle-event fm ch))
-          do (update-console-dimensions)
+          ;do (update-console-dimensions)
           do (display-screen fm)
              (ctl (:fgc #x222222)
                   (:bgc #xffffff))
@@ -124,7 +137,7 @@
 (defun render-frame (frame)
   (with-buffer (frame)
     (funcall (rfn frame) frame)
-    (ctl (:fls))))
+    (ctl (:ffb))))
 
 (defun make-noise-frame (r1 c1 r2 c2)
   (flet ((make-noise-renderer (color)
@@ -193,5 +206,6 @@
     (make-instance 'frame
                    :rfn #'reporter :vbuf *console*
                    :r1 r1 :c1 c1 :r2 r2 :c2 c2
+                   :rend :bth
                    :rows rows
                    :cols 50)))

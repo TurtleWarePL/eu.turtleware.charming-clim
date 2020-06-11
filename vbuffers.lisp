@@ -1,16 +1,17 @@
 (in-package #:eu.turtleware.charming-clim)
 
 (defgeneric get-cell (buffer row col))
-(defgeneric put-cell (buffer row col))
+(defgeneric put-cell (buffer row col ch fg bg))
 (defgeneric set-cell (buffer row col ch fg bg))
 (defgeneric inside-p (buffer row col))
 (defgeneric flush-buffer (buffer &key r1 c1 r2 c2 force))
 
 (defclass vbuffer ()
-  ((fgc  :initarg :fgc  :accessor fgc  :documentation "Foregorund color")
-   (bgc  :initarg :bgc  :accessor bgc  :documentation "Background color")
-   (row  :initarg :row  :accessor row  :documentation "Current row")
-   (col  :initarg :col  :accessor col  :documentation "Current col")
+  ((fgc :initarg :fgc :accessor fgc :documentation "Foregorund color")
+   (bgc :initarg :bgc :accessor bgc :documentation "Background color")
+   (row :initarg :row :accessor row :documentation "Current row")
+   (col :initarg :col :accessor col :documentation "Current col")
+   (rend :initarg :rend :accessor rend :documentation "Rendering mode")
    (clip :initarg :clip :accessor clip :documentation "Clipping object")
    (data :initarg :data :accessor data :documentation "Data buffer")
    (rows :initarg :rows :accessor rows :documentation "Buffer number of rows")
@@ -19,6 +20,7 @@
                      :bgc #x222222
                      :row 1
                      :col 1
+                     :rend :buf
                      :clip (make-instance 'vclip)))
 
 (defclass vcell ()
@@ -35,22 +37,40 @@
   (let ((data (data buf))
         (i0 (1- row))
         (i1 (1- col)))
-    (or (aref data i0 i1)
-        (setf (aref data i0 i1) (make-instance 'vcell)))))
+    (if (array-in-bounds-p data i0 i1)
+        (or (aref data i0 i1)
+            (setf (aref data i0 i1) (make-instance 'vcell)))
+        (make-instance 'vcell))))
 
-(defmethod put-cell ((buf vbuffer) row col)
-  (let ((cell (get-cell buf row col)))
-    (setf (dirty-p cell) nil)))
+(defmethod put-cell ((buf vbuffer) row col ch fg bg)
+  (declare (ignore row col ch fg bg)))
 
 (defmethod set-cell ((buf vbuffer) row col ch fg bg)
-  (let ((cell (get-cell buf row col)))
-    (unless (and (eql (ch cell) ch)
-                 (eql (fg cell) fg)
-                 (eql (bg cell) bg))
-      (setf (ch cell) ch
-            (fg cell) fg
-            (bg cell) bg
-            (dirty-p cell) t))))
+  (let* ((cell (get-cell buf row col))
+         (clean (and (eql ch (ch cell))
+                     (eql fg (fg cell))
+                     (eql bg (bg cell)))))
+    (flet ((set-cell ()
+             (unless clean
+               (setf (ch cell) ch
+                     (fg cell) fg
+                     (bg cell) bg)))
+           (put-cell ()
+             (put-cell buf row col ch fg bg)))
+      (ecase (rend buf)
+        (:buf
+         (set-cell)
+         ;; Unchanged cell retains its dirtiness. Changed cell is
+         ;; always dirty.
+         (unless clean
+           (setf (dirty-p cell) t)))
+        (:dir
+         (put-cell)
+         (setf (dirty-p cell) (not clean)))
+        (:bth
+         (set-cell)
+         (put-cell)
+         (setf (dirty-p cell) nil))))))
 
 (defclass vclip ()
   ((r1 :initarg :r1 :accessor r1)
@@ -136,5 +156,6 @@
                          (:ptr `(setf (ptr *buffer*) ,@args))
                          (:row `(setf (row *buffer*) ,@args))
                          (:col `(setf (col *buffer*) ,@args))
+                         (:rnd `(setf (rend *buffer*) ,@args))
                          (:ffb `(flush-buffer *buffer* :force t))
                          (:fls `(flush-buffer *buffer* :force nil)))))))
