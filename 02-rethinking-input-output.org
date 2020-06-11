@@ -138,6 +138,53 @@ and replace all references in the source code to use new symbols. Move
 the variable ~*terminal*~ and functions ~init-terminal~ and
 ~close-terminal~ to the top below the foreign function definitions.
 
+We'll slightly refactor ~set-*-color~ functions. Instead of accepting
+each color separately it will consume a number representing the color
+RGBA value (each is one byte). For instance #ff000000 for a color red.
+The alpha channel will be ignored for now, but having it will save us
+another change of a data representation format.
+
+#+BEGIN_SRC lisp
+  (defun set-foreground-color (color)
+    (let ((r (ldb '(8 . 24) color))
+          (g (ldb '(8 . 16) color))
+          (b (ldb '(8 .  8) color))
+          (a (ldb '(8 .  0) color)))
+      (declare (ignore a))
+      (sgr "38;2;" r ";" g ";" b)))
+
+  (defun set-background-color (color)
+    (let ((r (ldb '(8 . 24) color))
+          (g (ldb '(8 . 16) color))
+          (b (ldb '(8 .  8) color))
+          (a (ldb '(8 .  0) color)))
+      (declare (ignore a))
+      (sgr "48;2;" r ";" g ";" b)))
+#+END_SRC
+
+and fix all references in the source code:
+
+#+BEGIN_SRC lisp
+(defmacro ctl (&rest operations)
+  `((:fgc `(setf (fgc *console*) ,@args))
+    (:bgc `(setf (bgc *console*) ,@args)))
+
+(defclass console ()
+  (:default-initargs :fgc #xffa0a000 :bgc #x22222200))
+
+(defmethod (setf fgc) :after (rgba (instance console))
+  (set-foreground-color rgba))
+
+(defmethod (setf bgc) :after (rgba (instance console))
+  (set-background-color rgba))
+
+(defun show-screen ()
+  (out (:bgc #x00000000 :fgc #xbb000000))
+  (out (:bgc #x00000000
+        :fgc (alexandria:random-elt '(#x00444400 #x00444400 #x00664400)))))
+
+#+END_SRC
+
 We'll move now parts related to the console to a separate file
 ~console.lisp~ in this order:
 
@@ -164,6 +211,285 @@ now like this:
                  (:file "console" :depends-on ("packages" "terminal"))
                  (:file "example" :depends-on ("packages" "console"))))
 #+END_SRC
+
+* Virtual buffers
+
+Console is responsible for many things, so refactoring it to inherit
+from a class which represents only output makes sense. That will be
+also useful when we decide to add yet another layer of indirection.
+When implementing the ~buffer~ class we'll also fix unfortunate
+position representation as a cons and the clip area specification.
+
+Macros ~out~ and ~ctl~ will operate on the current virtual buffer. In
+order to do that we will define a protocol which must be implemented
+by all virtual buffers. ~with-clipping~ becomes now a convenience
+macro expanding to a generic function ~invoke-with-clipping~. A macro
+~with-buffer~ is introduce to bind the current buffer, which is bound
+to the variable ~*buffer*~.
+
+#+BEGIN_SRC lisp
+  (defgeneric put-cell (buffer row col ch fg bg))
+
+  (defgeneric fgc (buffer))
+  (defgeneric (setf fgc) (fgc buffer)
+    (:argument-precedence-order buffer fgc))
+
+  (defgeneric bgc (buffer))
+  (defgeneric (setf bgc) (bgc buffer)
+    (:argument-precedence-order buffer bgc))
+
+  (defgeneric row (buffer))
+  (defgeneric (setf row) (row buffer)
+    (:argument-precedence-order buffer row))
+
+  (defgeneric col (buffer))
+  (defgeneric (setf col) (col buffer)
+    (:argument-precedence-order buffer col))
+
+  (defgeneric rows (buffer))
+  (defgeneric cols (buffer))
+
+  (defgeneric inside-p (buffer row col))
+  (defgeneric invoke-with-clipping (buffer continuation
+                                    &rest opts
+                                    &key r1 c1 r2 c2 fn))
+
+  (defmacro with-clipping ((buffer &rest opts) &body body)
+    (let ((fn (gensym)))
+      `(flet ((,fn () ,@body))
+         (declare (dynamic-extent (function ,fn)))
+         (invoke-with-clipping ,buffer (function ,fn) ,@opts))))
+
+  (defvar *buffer*)
+
+  (defmacro with-buffer ((object) &body body)
+    `(let ((*buffer* ,object)) ,@body))
+#+END_SRC
+
+Implementing ~ctl~ and ~out~ macros function in these terms
+follows. We will leave out ~:cvp~ and ~:ptr~ options from the ~ctl~
+macro for a time being. ~letf~ and ~clear-rectangle~ are left
+unchanged.
+
+#+BEGIN_SRC lisp
+  (defmacro letf (bindings &body body)
+    (loop for (place value) in bindings
+          for old-val = (gensym)
+          collect `(,old-val ,place)      into saves
+          collect `(setf ,place ,value)   into store
+          collect `(setf ,place ,old-val) into restore
+          finally (return `(let (,@saves)
+                             (unwind-protect (progn ,@store ,@body)
+                               ,@restore)))))
+
+  (defmacro out ((&key row col fgc bgc) object)
+    `(let ((buf *buffer*)
+           (str (princ-to-string ,object)))
+       (assert (null (find #\newline str)))
+       (letf (((row buf) (or ,row (row buf)))
+              ((col buf) (or ,col (col buf)))
+              ((fgc buf) (or ,fgc (fgc buf)))
+              ((bgc buf) (or ,bgc (bgc buf))))
+         (loop with row = (row buf)
+               for col from (col buf)
+               for ch across str
+               with bgc = (bgc buf)
+               with fgc = (fgc buf)
+               do (put-cell buf row col ch fgc bgc)))))
+
+  (defmacro ctl (&rest operations)
+    `(let ((buf *buffer*))
+       ,@(loop for op in operations
+               collect (destructuring-bind (name &rest args) op
+                         (ecase name
+                           (:clr `(clear-rectangle ,@args))
+                           (:fgc `(setf (fgc buf) ,@args))
+                           (:bgc `(setf (bgc buf) ,@args))
+                           (:row `(setf (row buf) ,@args))
+                           (:col `(setf (col buf) ,@args)))))))
+
+  (defun clear-rectangle (r1 c1 r2 c2)
+    (loop with str = (make-string (1+ (- c2 c1)) :initial-element #\space)
+          for r from r1 upto r2
+          do (out (:row r :col c1) str)))
+#+END_SRC
+
+What would be a protocol without the implementation? Clipping will be
+implemented with the class ~clip~. This choice is transparent, because
+all functions are specialized on the buffer. Each buffer has its own
+clipping region. Abstract buffers don't know how to draw on a screen,
+so ~put-cell~ prints a warning.
+
+#+BEGIN_SRC lisp
+  (defclass clip ()
+    ((r1 :initarg :r1 :accessor r1)
+     (c1 :initarg :c1 :accessor c1)
+     (r2 :initarg :r2 :accessor r2)
+     (c2 :initarg :c2 :accessor c2)
+     (fn :initarg :fn :accessor fn))
+    (:default-initargs :r1 1 :c1 1 :r2 24 :c2 80
+                       :fn (constantly t)))
+
+  (defclass buffer ()
+    ((fgc :initarg :fgc :accessor fgc :documentation "Foregorund color")
+     (bgc :initarg :bgc :accessor bgc :documentation "Background color")
+     (row :initarg :row :accessor row :documentation "Current row")
+     (col :initarg :col :accessor col :documentation "Current col")
+     (clip :initarg :clip :accessor clip :documentation "Clipping object")
+     (rows :initarg :rows :accessor rows :documentation "Buffer number of rows")
+     (cols :initarg :cols :accessor cols :documentation "Buffer number of cols"))
+    (:default-initargs :clip (make-instance 'clip)))
+
+  (defmethod put-cell ((buffer buffer) row col ch fg bg)
+    (warn "put-cell: default method does nothing!"))
+
+  (defmethod inside-p ((buffer buffer) row col)
+    (let ((clip (clip buffer)))
+      (and (<= (r1 clip) row (r2 clip))
+           (<= (c1 clip) col (c2 clip))
+           (funcall (fn clip) row col))))
+
+  (defmethod invoke-with-clipping ((buffer buffer) cont &key r1 c1 r2 c2 fn)
+    (let ((clip (clip buffer)))
+      (letf (((r1 clip) (or r1 (r1 clip)))
+             ((c1 clip) (or c1 (c1 clip)))
+             ((r2 clip) (or r2 (r2 clip)))
+             ((c2 clip) (or c2 (c2 clip)))
+             ((fn clip) (if (null fn)
+                            (fn clip)
+                            (let ((old-fn (fn clip)))
+                              (lambda (row col)
+                                (and (funcall fn row col)
+                                     (funcall old-fn row col)))))))
+        (funcall cont))))
+#+END_SRC
+
+Finally we can modify the console class itself. ~with-console~ binds
+buffer separately, so we have access to different ~*buffer*~ and
+~*console*~ at the same time.
+
+#+BEGIN_SRC lisp
+  (defmacro with-console ((&rest args
+                           &key ios fgc bgc cvp fps &allow-other-keys)
+                          &body body)
+    (declare (ignore fgc bgc cvp fps))
+    `(let* ((*terminal* ,ios)
+            (*console* (make-instance 'console ,@args)))
+       (unwind-protect (with-buffer (*console*) ,@body)
+         (close-terminal (hnd *console*)))))
+#+END_SRC
+
+Updating the console dimensions now involves modifying upper bounds of
+the clipping region.
+
+#+BEGIN_SRC lisp
+(defun update-console-dimensions ()
+  (with-cursor-position ((expt 2 16) (expt 2 16))
+    (multiple-value-bind (rows cols)
+        (get-cursor-position)
+      (setf (rows *console*) rows)
+      (setf (cols *console*) cols)
+      (setf (r2 (clip *console*)) rows)
+      (setf (c2 (clip *console*)) cols))))
+#+END_SRC
+
+And the class ~console~ itself is remodeled to inherit from the class
+~buffer~. Notice that we get rid of slots ~pos~ and ~app~
+
+#+BEGIN_SRC lisp
+  (defclass console (buffer)
+    ((ios :initarg :ios :accessor ios :documentation "Console I/O stream.")
+     (cvp :initarg :cvp :accessor cvp :documentation "Cursor visibility.")
+     (ptr :initarg :ptr :accessor ptr :documentation "Pointer tracking.")
+     (fps :initarg :fps :accessor fps :documentation "Desired framerate.")
+     (hnd               :accessor hnd :documentation "Terminal handler."))
+    (:default-initargs :ios (error "I/O stream must be specified.")
+                       :fgc #xffa0a000 :bgc #x22222200 :row 1 :col 1
+                       :cvp nil :ptr t :fps 10))
+
+  (defmethod initialize-instance :after
+      ((instance console) &key fgc bgc row col cvp ptr)
+    (setf (hnd instance) (init-terminal))
+    (set-foreground-color fgc)
+    (set-background-color bgc)
+    (set-cursor-position row col)
+    (set-cursor-visibility cvp)
+    (set-mouse-tracking ptr)
+    (let ((*console* instance))
+      (update-console-dimensions)))
+
+  (defmethod (setf fgc) :after (rgba (instance console))
+    (set-foreground-color rgba))
+
+  (defmethod (setf bgc) :after (rgba (instance console))
+    (set-background-color rgba))
+
+  (defmethod (setf row) :after (row (instance console))
+    (set-cursor-position row nil))
+
+  (defmethod (setf col) :after (col (instance console))
+    (set-cursor-position nil col))
+
+  (defmethod (setf ptr) :after (ptr (instance console))
+    (set-mouse-tracking mouse-tracking (not (null ptr))))
+
+  (defmethod (setf cvp) :after (cvp (instance console))
+    (set-cursor-visibility (not (null cvp))))
+#+END_SRC
+
+Putting a cell on the screen is a matter of setting the cursor
+position, cell colors and calling ~put~. It is the responsibility of
+~put-cell~ to verify, whether the cell is inside the clipping region.
+
+#+BEGIN_SRC lisp
+  (defmethod put-cell ((buffer console) row col ch fg bg)
+    (when (inside-p buffer row col)
+      (set-cursor-position row col)
+      (set-foreground-color fg)
+      (set-background-color bg)
+      (put ch)))
+#+END_SRC
+
+Finally we need to account for a change in the ~with-clipping~ macro
+to pass a buffer as the first argument and remove references to the
+~app~ accessor. Modify ~show-screen~:
+
+#+BEGIN_SRC lisp
+  (defun show-screen ()
+    (loop for ch = (read-input)
+          until (null ch)
+          do (cond ((keyp ch #\Q :c)
+                    (cl-user::quit))
+                   ((keyp ch #\U :c)
+                    (ignore-errors (user-action)))))
+    (flet ((ll (row col)
+             (or (and (< (abs (- (+ col row) 26)) 2)
+                      (<= col 20))
+                 (< (abs (- (+ (- 40 col) row) 26)) 2))))
+      (with-clipping (*buffer* :fn #'ll :r1 2 :r2 11)
+        (out (:row (1+ (random 12))
+              :col (1+ (random 40))
+              :bgc #x00000000
+              :fgc #xbb000000)
+             (alexandria:random-elt '("X" "O"))))
+      (with-clipping (*buffer* :fn (lambda (row col)
+                                     (or (= row 1)
+                                         (= row 12)
+                                         (funcall (complement #'ll) row col))))
+        (out (:row (1+ (random 12))
+              :col (1+ (random 40))
+              :bgc #x00000000
+              :fgc (alexandria:random-elt '(#x00444400 #x00444400 #x00664400)))
+             (alexandria:random-elt '("+" "-"))))))
+#+END_SRC
+
+All these changes were pretty invasive, so make sure to restart the
+image and try running application once more to validate, that
+everything works.
+
+#+CAPTION: New examples in action.
+#+NAME:   fig:examples
+[[./static/02-smoke-test.webm]]
 
 * Extending examples
 

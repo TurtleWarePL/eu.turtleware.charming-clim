@@ -64,7 +64,7 @@
 (defun render-options (frame)
   (multiple-value-bind (wr1 wc1 wr2 wc2) (fsz frame)
     (let ((col (1+ wc2)))
-      (out (:row wr1 :col col :fgc #xff2244) "x")
+      (out (:row wr1 :col col :fgc #xff224400) "x")
       (out (:row (+ wr1 1) :col col) "o")
       (out (:row (+ wr1 2) :col col) ">")
 
@@ -78,8 +78,8 @@
 
 (defun render-window (frame activep)
   (multiple-value-bind (wr1 wc1 wr2 wc2) (fsz frame)
-    (ctl (:bgc (if activep #x444488 #x111111))
-         (:fgc (if activep #xffffff #xbbbbbb)))
+    (ctl (:bgc (if activep #x44448800 #x11111100))
+         (:fgc (if activep #xffffff00 #xbbbbbb00)))
     (clear-rectangle wr1 wc1 wr2 wc2)
     (render-options frame)
     (render-frame frame)))
@@ -108,15 +108,15 @@
                    do (handle-event fm ch))
           ;do (update-console-dimensions)
           do (display-screen fm)
-             (ctl (:fgc #x222222)
-                  (:bgc #xffffff))
+             (ctl (:fgc #x22222200)
+                  (:bgc #xffffff00))
              (let* ((status (format nil "Rows ~3d, Cols ~3d, FPS ~8,2f, chars ~8d"
                                     (1- rows) cols fps count))
                     (len (length status)))
                (ctl (:clr 1 (min (1+ len) cols) 1 cols))
                (out (:col 1 :row 1) status))
-             (ctl (:fgc #xffa0a0)
-                  (:bgc #x222222))
+             (ctl (:fgc #xffa0a000)
+                  (:bgc #x22222200))
           do (ctl (:fls))
              (setf count *count*)
              (let* ((stop (get-internal-real-time))
@@ -147,11 +147,11 @@
                             do (out (:row row
                                      :col col
                                      :bgc (alexandria:random-elt
-                                           `(#x000000 #x080808))
+                                           `(#x00000000 #x08080800))
                                      :fgc color)
                                     (alexandria:random-elt '("+" "-")))))))
          (random-color ()
-           (random (1+ #xffffff))))
+           (random (1+ #xffffff00))))
     (make-instance 'frame
                    :rfn (make-noise-renderer (random-color))
                    :r1 r1 :c1 c1 :r2 r2 :c2 c2
@@ -166,8 +166,8 @@
          (current-row (1+ (truncate rows 2)))
          (current-col 2))
     (flet ((draw-square ()
-             (ctl (:bgc #x444400)
-                  (:fgc #xffbb00)
+             (ctl (:bgc #x44440000)
+                  (:fgc #xffbb0000)
                   (:clr 1 1 rows cols))
              (let* ((now (get-internal-real-time))
                     (delta (- now last-time))
@@ -197,12 +197,12 @@
   (flet ((reporter (frame)
            (declare (ignore frame))
            (let ((str "I'd like to report an event here!"))
-             (ctl (:bgc #x000000))
+             (ctl (:bgc #x00000000))
              (clear-rectangle 1 1 rows 50)
              (loop for row from 1 upto rows
                    for id from 0
                    for string = (format nil "XXX ~d/~d: ~a" id (1- rows) str)
-                   do (out (:row row :col 1 :fgc #xff8888) string)))))
+                   do (out (:row row :col 1 :fgc #xff888800) string)))))
     (make-instance 'frame
                    :rfn #'reporter :vbuf *console*
                    :r1 r1 :c1 c1 :r2 r2 :c2 c2

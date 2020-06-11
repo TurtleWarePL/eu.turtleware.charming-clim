@@ -1,6 +1,6 @@
 (in-package #:eu.turtleware.charming-clim)
 
-(defclass surface (vbuffer)
+(defclass surface (buffer)
   ((vbuf :initarg :vbuf :accessor vbuf :documentation "Underlying vbuffer")
    (row0 :initarg :row0 :accessor row0 :documentation "Scroll row offset")
    (col0 :initarg :col0 :accessor col0 :documentation "Scroll col offset")
@@ -21,7 +21,7 @@
   (unless cols
     (setf cols (1+ (- c2 c1)))
     (setf (cols buf) cols))
-  (setf (clip buf) (make-instance 'vclip :r2 rows :c2 cols)
+  (setf (clip buf) (make-instance 'clip :r2 rows :c2 cols)
         (data buf) (make-array (list rows cols)
                                :adjustable t
                                :initial-element nil)))

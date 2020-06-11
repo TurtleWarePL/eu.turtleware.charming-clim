@@ -1,6 +1,6 @@
 (in-package #:eu.turtleware.charming-clim)
 
-(defclass vconsole (vbuffer)
+(defclass console (buffer)
   ((ios :initarg :ios :accessor ios :documentation "Console I/O stream.")
    (cvp :initarg :cvp :accessor cvp :documentation "Cursor visibility.")
    (ptr :initarg :ptr :accessor ptr :documentation "Pointer tracking.")
@@ -17,7 +17,7 @@
                         &body body)
   (declare (ignore fgc bgc cvp fps))
   `(let* ((*terminal* ,ios)
-          (*console* (make-instance 'vconsole ,@args)))
+          (*console* (make-instance 'console ,@args)))
      (unwind-protect (with-buffer (*console*) ,@body)
        (close-terminal (hnd *console*)))))
 
@@ -52,7 +52,7 @@
   t)
 
 (defmethod initialize-instance :after
-    ((instance vconsole) &key fgc bgc row col cvp ptr)
+    ((instance console) &key fgc bgc row col cvp ptr)
   (setf (hnd instance) (init-terminal))
   (set-foreground-color fgc)
   (set-background-color bgc)
@@ -65,7 +65,7 @@
   (let ((*console* instance))
     (update-console-dimensions)))
 
-(defmethod put-cell ((buf vconsole) row col ch fg bg)
+(defmethod put-cell ((buf console) row col ch fg bg)
   (when (member (rend buf) '(:dir :bth))
     (set-cursor-position row col)
     (set-foreground-color fg)
@@ -78,7 +78,7 @@
     (setf (bgc buf) bg))
   (put ch))
 
-(defmethod flush-buffer ((buf vconsole)
+(defmethod flush-buffer ((buf console)
                          &key
                            (r1 1)
                            (c1 1)
