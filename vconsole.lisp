@@ -16,14 +16,14 @@
                          &key ios fgc bgc cvp fps &allow-other-keys)
                         &body body)
   (declare (ignore fgc bgc cvp fps))
-  `(let* ((*console-io* ,ios)
+  `(let* ((*terminal* ,ios)
           (*console* (make-instance 'vconsole ,@args)))
      (unwind-protect (with-buffer (*console*) ,@body)
-       (close-console (hnd *console*)))))
+       (close-terminal (hnd *console*)))))
 
 (defun get-cursor-position ()
   (request-cursor-position)
-  (finish-output *console-io*)
+  (finish-output *terminal*)
   (handler-case (loop (read-input))
     (cursor-position-report (c)
       (values (row c) (col c)))))
@@ -53,7 +53,7 @@
 
 (defmethod initialize-instance :after
     ((instance vconsole) &key fgc bgc row col cvp ptr)
-  (setf (hnd instance) (init-console))
+  (setf (hnd instance) (init-terminal))
   (set-foreground-color fgc)
   (set-background-color bgc)
   (set-cursor-position row col)
@@ -101,7 +101,7 @@
                       (setf (dirty-p cell) nil)
                  else
                    do (setf skipped t))
-        finally (finish-output *console-io*)
+        finally (finish-output *terminal*)
                 (unless (eql (fgc buf) fgc)
                   (set-foreground-color fgc)
                   (setf (fgc buf) fgc))

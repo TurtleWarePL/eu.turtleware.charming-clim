@@ -1,4 +1,4 @@
-#+title: Charming CLIM tutorial part 2 – Rethinking I/O
+#+title: Charming CLIM tutorial part 2 – Rethinking The Output
 #+author: Daniel 'jackdaniel' Kochmański
 #+email: daniel@turtleware.eu
 #+hugo_base_dir: ~/hugo/
@@ -16,6 +16,154 @@ or ~ctl~, the characters are sent to it immedietely, and we read the
 input with ~read-input~ until the stream is empty. The model
 introduced in the previous post is certainly simple, but simple models
 tend to be hard to use efficiently . We'll settle on _easy_ instead.
+In this post I'll focus on the output.
+
+* Layered abstraction
+
+#+BEGIN_QUOTE David Wheeler
+All problems in computer science can be solved by another level of
+indirection.
+#+END_QUOTE
+
+We'll build a convenient abstraction for writing console applications.
+It would be a shame though if we had abandoned means to manipulate the
+terminal directly. The library will present different APIs, so it is
+possible to cater to the programmer demands. In principle it is not
+feasible to use two different abstractions simultaneously because
+higher abstractions build upon lower ones and things may go awry.
+
+#+BEGIN_QUOTE Unknown
+... except for the problem of too many layers of indirection.
+#+END_QUOTE
+
+For now we'll define two packages: ~eu.turtleware.charming-clim/ll~
+and ~eu.turtleware.charming-clim.terminal/hl~ with low and high level
+abstraction for accessing the terminal. They are meant only as means
+to export symbols, all implementation is made in a single package.
+This practice greatly improves quality of life of person who works
+with Common Lisp packages. Now create a file ~packages.lisp~.
+
+#+BEGIN_SRC lisp
+  (defpackage #:eu.turtleware.charming-clim/ll
+    (:export #:init-terminal
+             #:close-terminal
+             #:*terminal*
+
+             #:put #:esc #:csi #:sgr
+             #:read-input #:keyp
+
+             #:reset-terminal
+             #:clear-terminal
+
+             #:clear-line
+             #:set-foreground-color
+             #:set-background-color
+
+             #:with-cursor-position
+             #:set-cursor-position
+             #:save-cursor-position
+             #:restore-cursor-position
+             #:request-cursor-position
+
+             #:cursor-up
+             #:cursor-down
+             #:cursor-right
+             #:cursor-left
+
+             #:set-cursor-visibility
+             #:set-mouse-tracking))
+
+  (defpackage #:eu.turtleware.charming-clim/hl
+    (:export #:with-console #:out #:ctl))
+
+  (defpackage #:eu.turtleware.charming-clim
+    (:use #:common-lisp
+          #:eu.turtleware.charming-clim/ll
+          #:eu.turtleware.charming-clim/hl))
+#+END_SRC
+
+We'll take this opportunity to make function naming more consistent
+and introduce functions for cursor manipulation. Rename functions
+
+- ~(setf cursor-visibility)~ -> ~set-cursor-visibility~
+- ~(setf mouse-tracking)~    -> ~set-mouse-tracking~
+- ~(setf alt-is-meta)~       -> ~set-alt-is-meta~
+
+and add escape sequences for manipulating the cursor. Don't forget to
+change references to renamed functions in other parts of the code (in
+a macro ~ctl~ and in functions ~initialize-instance~, ~(setf ptr)~ and
+~(setf cvp)~.
+
+#+BEGIN_SRC lisp
+  (macrolet ((moveit (endch)
+               `(if (= n 1)
+                    (csi ,endch)
+                    (csi n ,endch))))
+    (defun cursor-up    (&optional (n 1)) (moveit "A"))
+    (defun cursor-down  (&optional (n 1)) (moveit "B"))
+    (defun cursor-right (&optional (n 1)) (moveit "C"))
+    (defun cursor-left  (&optional (n 1)) (moveit "D")))
+
+  (defun set-cursor-visibility (visiblep)
+    (if visiblep
+        (csi "?" 2 5 "h")
+        (csi "?" 2 5 "l")))
+
+  ;;; (csi ? tracking ; encoding h/l)
+  ;;; tracking: 1000 - normal, 1002 - button, 1003 - all motion
+  ;;;           1004 - focus in/out
+  ;;; encoding: 1006 - sgr encoding scheme
+  (defun set-mouse-tracking (enabledp)
+    (if enabledp
+        (csi "?" 1003 ";" 1006 "h")
+        (csi "?" 1003 "l")))
+
+  (defun set-alt-is-meta (bool)
+    (if bool
+        (setf +alt-mod+ +meta-mod+)
+        (setf +alt-mod+ +alt-mod*+)))
+#+END_SRC
+
+From now on when we talk about a low level abstraction we'll call the
+destination object the "terminal", while when we talk about high level
+abstraction we'll call it the "console". Rename the following symbols
+
+- ~*console-io*~  -> ~*terminal*~
+- ~init-console~  -> ~init-terminal~
+- ~close-console~ -> ~close-terminal~
+- ~clear-console~ -> ~clear-terminal~
+- ~reset-console~ -> ~reset-terminal~
+
+and replace all references in the source code to use new symbols. Move
+the variable ~*terminal*~ and functions ~init-terminal~ and
+~close-terminal~ to the top below the foreign function definitions.
+
+We'll move now parts related to the console to a separate file
+~console.lisp~ in this order:
+
+- the variable ~*console*~ and the macro ~with-console~
+- clipping (variables and operators ~inside~ and ~with-clipping~)
+- macros ~letf~, ~out~ and ~ctl~
+- functions ~clear-rectangle~, ~get-cursor-position~ and
+  ~update-console-dimensions~
+- the class ~console~ and its methods
+
+Finally the example code will be put in a file ~example.lisp~. Move
+there functions ~show-screen~ and ~start-display~.
+
+A ~defsystem~ form in the file ~eu.turtleware.charming-clim.asd~ looks
+now like this:
+
+#+BEGIN_SRC lisp
+  (defsystem "eu.turtleware.charming-clim"
+    :defsystem-depends-on (#:cffi)
+    :depends-on (#:alexandria #:cffi #:swank)
+    :components ((:cfile "raw-mode")
+                 (:file "packages")
+                 (:file "terminal" :depends-on ("packages"))
+                 (:file "console" :depends-on ("packages" "terminal"))
+                 (:file "example" :depends-on ("packages" "console"))))
+#+END_SRC
 
 * Extending examples
 
@@ -532,105 +680,6 @@ As we can see, a major bottlenecks are:
 Sometimes changing color is not necessary, because it does not change
 from cell to cell. For instance in the noise demo the foreground color
 doesn't change and only the background color is picked randomly.
-
-* Refining interfaces
-
-Being able to draw anywhere on the screen with color is certainly
-useful feature and demanding from the programmer to print only to
-consecutive cells would be bold. Bringing back the old state is also
-nice because there is no need for excess bookkeeping. In other words,
-traits of the macro ~out~ are very reasonable and we don't want to
-change them.
-
-#+BEGIN_QUOTE David Wheeler
-All problems in computer science can be solved by another level of
-indirection.
-#+END_QUOTE
-
-... except for the problem of too many layers of indirection. As you
-may guess, we'll introduce a layer of indirection to the console
-access. Macros ~out~ and ~ctl~ will manipulate a virtual buffer with
-virtual cells which have properties like colors and content. Our
-interface will be split between the low level for direct terminal
-access and the high level for convenient use. That way we'll have both
-_simple_ and _easy_ interfaces available. We will extend them when
-needed. Create a new file ~packages.lisp~.
-
-#+BEGIN_SRC lisp
-  (defpackage #:eu.turtleware.charming-clim.terminal/ll
-    (:export #:init-console
-             #:close-console
-             #:*console-io*
-
-             #:put #:esc #:csi #:sgr
-             #:read-input #:set-alt-is-meta #:keyp
-
-             #:reset-console
-             #:clear-console
-             #:clear-rectangle
-             #:clear-line
-             #:set-foreground-color
-             #:set-background-color
-
-             #:set-cursor-position
-             #:with-cursor-position
-             #:save-cursor-position
-             #:restore-cursor-position
-             #:request-cursor-position
-
-             #:cursor-up
-             #:cursor-down
-             #:cursor-right
-             #:cursor-left
-
-             #:set-cursor-visibility
-             #:set-mouse-tracking))
-
-  (defpackage #:eu.turtleware.charming-clim.terminal/hl
-    (:export #:with-console
-             #:out #:ctl))
-
-  (defpackage #:eu.turtleware.charming-clim
-    (:use #:common-lisp
-          #:eu.turtleware.charming-clim.terminal/ll
-          #:eu.turtleware.charming-clim.terminal/hl))
-#+END_SRC
-
-Notice, that all implementation is done in a single package, namely
-~eu.turtleware.charming-clim~. That is a deliberate choice which saves
-us from the package hell while still allowing users to pick from
-nicely crafted APIs. We'll take this opportunity to rename "setf"
-functions to be more consistent with other symbols:
-
-- ~(setf cursor-visibility)~ -> ~set-cursor-visibility~
-- ~(setf mouse-tracking)~    -> ~set-mouse-tracking~
-- ~(setf alt-is-meta)~       -> ~set-alt-is-meta~
-
-Change these names and adjust all references in the source code
-now. Temporarily we still use internal symbols in the examples, but
-eventually we want them to use only the high level package. Create a
-new file ~vconsole.lisp~ and move there the variable ~*console*~, the
-clipping functionality, macros ~out~ and ~ctl~, functions
-~clear-rectangle~, ~get-cursor-position~, ~update-console-dimensions~,
-the class ~console~ with its definitions and the macro ~with-console~.
-
-A new system definition should look like this:
-
-#+BEGIN_SRC lisp
-  (defsystem "eu.turtleware.charming-clim"
-    :defsystem-depends-on (#:cffi)
-    :depends-on (#:alexandria #:cffi #:swank)
-    :components ((:static-file "01-controlling-the-terminal.org")
-                 (:static-file "02-rethinking-input-output.org")
-                 (:cfile "raw-mode")
-                 (:file "packages")
-                 (:file "terminal" :depends-on ("raw-mode" "packages"))
-                 (:file "vconsole" :depends-on ("terminal" "packages"))
-                 (:file "examples" :depends-on ("packages" "terminal" "vconsole"))))
-#+END_SRC
-
-Before going further make sure that the system works the same as
-previously. Such refactors are prone to typos and omissions.
 
 * Virtual console
 

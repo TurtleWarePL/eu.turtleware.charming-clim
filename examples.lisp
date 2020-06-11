@@ -95,7 +95,7 @@
 (defun start-display ()
   (swank:create-server)
   (with-console (:ios *terminal-io*)
-    (clear-console)
+    (clear-terminal)
     (loop with fm = (make-instance 'frame-manager)
           with count = 0
           with fps = :|Good!.00|
