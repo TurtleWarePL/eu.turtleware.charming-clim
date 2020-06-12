@@ -321,12 +321,14 @@ clipping region. Abstract buffers don't know how to draw on a screen,
 so ~put-cell~ prints a warning.
 
 #+BEGIN_SRC lisp
-  (defclass clip ()
+  (defclass bbox ()
     ((r1 :initarg :r1 :accessor r1)
      (c1 :initarg :c1 :accessor c1)
      (r2 :initarg :r2 :accessor r2)
-     (c2 :initarg :c2 :accessor c2)
-     (fn :initarg :fn :accessor fn))
+     (c2 :initarg :c2 :accessor c2)))
+
+  (defclass clip (bbox)
+    ((fn :initarg :fn :accessor fn))
     (:default-initargs :r1 1 :c1 1 :r2 24 :c2 80
                        :fn (constantly t)))
 
@@ -490,6 +492,182 @@ everything works.
 #+CAPTION: New examples in action.
 #+NAME:   fig:examples
 [[./static/02-smoke-test.webm]]
+
+* Writing the example application
+
+Time to write a new example application. Sit tight, we are writing a
+window manager! For the sake of being compatible with CLIM terminology
+we'll call it a frame manager. Each application will be represented by
+a frame defined by its bounding box and a rendering function.
+
+#+BEGIN_SRC lisp
+  (defclass frame-manager ()
+    ((frames :initarg :frames :accessor frames :documentation "All frames")
+     (active :initarg :active :accessor active :documentation "Active frame"))
+    (:default-initargs :frames nil :active nil))
+
+  ;;; Ha ha, totally not a clip.
+  (defclass frame (bbox)
+    ((fn :initarg :fn :accessor fn))
+    (:default-initargs :r1 1 :c1 1 :r2 24 :c2 80
+                       :fn (constantly t)))
+#+END_SRC
+
+Displaying the frame involves calling the rendering function with
+clipping enabled and showing decorations. Usually cell width is
+smaller than its height, so drawing decorations as a vertical bar on
+one of the application sides makes more sense if we want to save some
+space. That's what we'll do. Active frame will be signified with a
+diffrent side bar color.
+
+#+BEGIN_SRC lisp
+  (defun render-application (fm frame)
+    (with-clipping (*buffer* :r1 (r1 frame)
+                             :c1 (c1 frame)
+                             :r2 (r2 frame)
+                             :c2 (c2 frame))
+      (funcall (fn frame) frame)))
+
+  (defun render-decorations (fm frame)
+    (declare (ignore fm))
+    (loop with col = (1+ (c2 frame))
+          for row from (1+ (r1 frame)) upto (1- (r2 frame))
+          do (out (:row row :col col) " ")
+          finally (out (:col col :row (r1 frame) :fgc #xff224400) "x")
+                  (out (:col col :row (r2 frame)) "/")))
+
+  (defun display-screen (fm)
+    (dolist (frame (frames fm))
+        (if (eq frame (active fm))
+            (ctl (:bgc #x22224400) (:fgc #xffffff00))
+            (ctl (:bgc #x11111100) (:fgc #xbbbbbb00)))
+      (render-application fm frame)
+      (render-decorations fm frame)))
+#+END_SRC
+
+Handling events is now a responsibility of a separate function.
+Current key actions:
+
+- C-Q :: quit
+- C-R :: update dimensions and redraw the console
+- C-N :: change the active frame
+- C-U :: call the user action
+- C-E :: signal an error
+
+~start-display~ is slightly modified to behave better with errors.
+
+#+BEGIN_SRC lisp
+  (defun handle-event (fm event)
+    (flet ((reset ()
+             (ctl (:bgc #x22222200))
+             (update-console-dimensions)
+             (clear-terminal)))
+      (cond ((keyp event #\Q :c)
+             (cl-user::quit))
+            ((keyp event #\R :c)
+             (reset))
+            ((keyp event #\N :c)
+             (alexandria:if-let ((cur (active fm)))
+               (let* ((fms (frames fm))
+                      (pos (position cur fms))
+                      (new (1+ pos)))
+                 (if (= new (length fms))
+                     (setf (active fm) nil)
+                     (setf (active fm) (elt fms new))))
+               (setf (active fm) (first (frames fm)))))
+            ((keyp event #\U :c)
+             (ignore-errors (user-action)))
+            ((keyp event #\E :c)
+             (error "bam")))))
+
+  (defun start-display ()
+    (loop
+      (with-simple-restart (again "Start display again.")
+        (ignore-errors (swank:create-server))
+        (handler-case
+            (with-console (:ios *terminal-io*)
+              (show-screen))
+          (error (sig) (error sig))))))
+#+END_SRC
+
+Define two application renderers so we have something to display. Note
+that each renderer must know its frame position. In other words
+~show-lambda~ as it is currently defined can't be moved as a
+frame. Noise demo is like a white noise, but in color.
+
+#+BEGIN_SRC lisp
+  (defun lambda-demo (frame)
+    (declare (ignore frame))
+    (flet ((ll (row col)
+             (or (and (< (abs (- (+ col row) 26)) 2)
+                      (<= col 20))
+                 (< (abs (- (+ (- 40 col) row) 26)) 2))))
+      (with-clipping (*buffer* :fn #'ll :r1 2 :r2 11)
+        (out (:row (1+ (random 12))
+              :col (1+ (random 40))
+              :bgc #x00000000
+              :fgc #xbb000000)
+             (alexandria:random-elt '("X" "O"))))
+      (with-clipping (*buffer* :fn (lambda (row col)
+                                     (or (= row 1)
+                                         (= row 12)
+                                         (funcall (complement #'ll) row col))))
+        (out (:row (1+ (random 12))
+              :col (1+ (random 40))
+              :bgc #x00000000
+              :fgc (alexandria:random-elt '(#x00444400 #x00444400 #x00664400)))
+             (alexandria:random-elt '("+" "-"))))))
+
+  (defun noise-demo (frame)
+    (loop for row from (r1 frame) upto (r2 frame)
+          do (loop for col from (c1 frame) upto (c2 frame)
+                   do (out (:row row
+                            :col col
+                            :bgc (alexandria:random-elt `(#x00000000 #x08080800))
+                            :fgc (alexandria:random-elt `(#xffff8800 #x88ffff00)))
+                           (alexandria:random-elt '("+" "-"))))))
+
+  (defun make-lambda-demo (&rest args &key r1 c1 r2 c2)
+    (apply #'make-instance 'frame :fn #'lambda-demo args))
+
+  (defun make-noise-demo (&rest args &key r1 c1 r2 c2)
+    (apply #'make-instance 'frame :fn #'noise-demo args))
+#+END_SRC
+
+~show-screen~ starts a loop which is responsible for updating the
+screen. We are not calling ~sleep~ anymore because we'll measure
+performance. At bottom we'll display a modeline printing whichever
+information we'll find useful.
+
+#+BEGIN_SRC lisp
+  (defun show-modeline ()
+    (let ((row (rows *console*))
+          (col (cols *console*)))
+      (ctl (:bgc #xdddddd00)
+           (:fgc #x22222200)
+           (:clr row 1 row col))
+      (out (:row row :col 1)
+           (format nil "Rows: ~d, Cols: ~d" row col))))
+
+  (defun show-screen ()
+    (loop with f1 = (make-lambda-demo :r2 12 :c2 40)
+          with f2 = (make-noise-demo :r1 10 :c1 45 :r2 15 :c2 55)
+          with fm = (make-instance 'frame-manager :frames (list f1 f2))
+          do (loop for event = (read-input)
+                   until (null event)
+                   do (handle-event fm event))
+          do (display-screen fm)
+          do (show-modeline)))
+#+END_SRC
+
+#+CAPTION: The frame manager.
+#+NAME:   fig:frames
+[[./static/02-frames.webm]]
+
+It is easy to spot that the modeline flickers. This is because we
+first clear the whole line and then we draw on top of it. This is
+something that will be addressed soon.
+
 
 * Extending examples
 
