@@ -167,7 +167,7 @@ and fix all references in the source code:
 #+BEGIN_SRC lisp
 (defmacro ctl (&rest operations)
   `((:fgc `(setf (fgc *console*) ,@args))
-    (:bgc `(setf (bgc *console*) ,@args)))
+    (:bgc `(setf (bgc *console*) ,@args))))
 
 (defclass console ()
   (:default-initargs :fgc #xffa0a000 :bgc #x22222200))
@@ -433,7 +433,7 @@ And the class ~console~ itself is remodeled to inherit from the class
     (set-cursor-position nil col))
 
   (defmethod (setf ptr) :after (ptr (instance console))
-    (set-mouse-tracking mouse-tracking (not (null ptr))))
+    (set-mouse-tracking (not (null ptr))))
 
   (defmethod (setf cvp) :after (cvp (instance console))
     (set-cursor-visibility (not (null cvp))))
@@ -668,8 +668,493 @@ It is easy to spot that the modeline flickers. This is because we
 first clear the whole line and then we draw on top of it. This is
 something that will be addressed soon.
 
+* Benchmarks and optimizations
 
-* Extending examples
+To make meaningful optimizations it is important to measure things.
+Otherwise we may spend hours and days on improving a loop performance
+when in fact we are bound by the I/O. We will do some exploratory
+benchmarks, that is we'll create a metric and try to optimize it. The
+first thing coming to mind is FPS. Then, since we print onto the
+terminal, number of characters written per frame. Finally, two
+compound metrics: average number of writes per single terminal cell
+and the write velocity (total number of characters per second).
+
+We will display all in the modeline. Common Lisp have internal time
+which has usually the unit being 1/1000s. This precision is not good
+enough. For instance if we draw 2000fps the time difference will be
+less than the internal time unit. Instead we'll count number of frames
+which we were able to render during a period of one second. To measure
+number of characters written we'll add a kludge to the function ~put~:
+each write increases the counter. Escape sequences are also counted.
+
+#+BEGIN_SRC lisp
+  ;; terminal.lisp
+  (defvar *counter* 0)
+  (defun put (&rest args)
+    "Put raw string on a terminal"
+    (let* ((str (format nil "~{~a~}" args))
+           (len (length str)))
+      (incf *counter* len)
+      (princ str *terminal*))
+    (finish-output *terminal*))
+
+  ;; example.lisp
+  (let ((cycle-start (get-internal-real-time))
+        (frame-count 0)
+        (last-second 0))
+    (defun get-fps ()
+      (if (> (- (get-internal-real-time) cycle-start)
+             internal-time-units-per-second)
+          (setf cycle-start (get-internal-real-time)
+                last-second frame-count
+                frame-count 0)
+          (incf frame-count))
+      last-second))
+
+  (defun get-cpf ()
+    (prog1 *counter*
+      (setf *counter* 0)))
+
+  (defun show-modeline ()
+    (let* ((row (rows *console*))
+           (col (cols *console*))
+           (cells (* row col))
+           (fps (get-fps))
+           (wch (get-cpf))
+           (vel (* fps wch))
+           (wpc (truncate wch cells))
+           (str (format nil "Cells ~d (~d x ~d), FPS: ~d, WCH: ~d, WPC: ~d, VEL: ~d"
+                        cells row col fps wch wpc vel))
+           (rem (- col (length str)))
+           (fil (if (plusp rem)
+                    (make-string rem :initial-element #\space)
+                    ""))
+           (str (subseq (format nil "~a~a" str fil) 0 col)))
+      (out (:row row :col 1) str)))
+#+END_SRC
+
+#+CAPTION: Modeline with benchmarks
+#+NAME:   fig:modeline
+[[./static/02-modeline.webm]]
+
+Current demos are not representative, because they do not fill all
+cells in the terminal. For that we'll use a full screen noise demo and
+turn off the lambda demo. It fills whole terminal except the last row
+where we display the modeline. To reduce the noise (ha ha!), we'll
+skip the window decorations and setting the "activity" color.
+
+#+BEGIN_SRC lisp
+  (defun display-screen (fm)
+    (dolist (frame (frames fm))
+      ;; (if (eq frame (active fm))
+      ;;     (ctl (:bgc #x22224400) (:fgc #xffffff00))
+      ;;     (ctl (:bgc #x11111100) (:fgc #xbbbbbb00)))
+      (render-application fm frame)
+      ;; (render-decorations fm frame)
+      ))
+
+  (defun ensure-demos (fm)
+    (let* ((rows (1- (rows *console*)))
+           (cols (cols *console*))
+           (frames (frames fm))
+           (frame (first frames)))
+      (when (or (null frame)
+                (not (null (rest frames)))
+                (/= rows (r2 frame))
+                (/= cols (c2 frame)))
+        (setf (frames fm)
+              (list (make-noise-demo :r2 rows :c2 cols))))))
+
+  (defun handle-event (fm event)
+    #|...|#
+    ((keyp event #\R :c)
+     (reset)
+     (setf (frames fm) nil)
+     (ensure-demos fm))
+    #|...|#)
+
+  (defun show-screen ()
+    (loop with fm = (make-instance 'frame-manager)
+          do (ensure-demos fm)
+          do (loop for event = (read-input)
+                   until (null event)
+                   do (handle-event fm event))
+          do (display-screen fm)
+          do (show-modeline)))
+#+END_SRC
+
+You may need to type ~C-e~ and restart display from a debugger to
+restart the ~show-screen~ loop. Now it looks more like it - FPS is
+crap and drops when we grow the terminal and update its dimensions
+with ~C-r~. For 25x80 terminal it is around 23fps with 125 writes per
+single cell and around 5M characters per second.
+
+#+CAPTION: Counting FPS (full screen)
+#+NAME:   fig:crap-fps
+[[./static/02-crap-fps.webm]]
+
+One obvious optimization is to call ~finish-output~ after each frame
+rendered, not after each sequence put on the terminal. We'll abstract
+flushing the buffer with a generic function ~flush-buffer~ which will
+be a part of the virtual buffer protocol. It will be accompanied with
+the new ~ctl~ operation called ~:fls~.
+
+#+BEGIN_SRC lisp
+(defgeneric flush-buffer (buffer &rest args))
+
+(defmacro ctl (&rest operations)
+  `(let ((buf *buffer*))
+     ,@(loop for op in operations
+             collect (destructuring-bind (name &rest args) op
+                       (ecase name
+                         (:fgc `(setf (fgc buf) ,@args))
+                         (:bgc `(setf (bgc buf) ,@args))
+                         (:row `(setf (row buf) ,@args))
+                         (:col `(setf (col buf) ,@args))
+                         (:clr `(clear-rectangle ,@args))
+                         (:fls `(flush-buffer buf ,@args)))))))
+
+(defmethod flush-buffer ((buffer buffer) &rest args)
+  (declare (ignore buffer args))
+  #|whoosh|#)
+
+(defmethod flush-buffer ((buffer console) &rest args)
+  (declare (ignore buffer args))
+  (finish-output *terminal*))
+#+END_SRC
+
+We need to flush the buffer after each iteration of a display loop,
+otherwise we have no guarantees that anything will be displayed.
+Querying the terminal also requires flushing the output if we want to
+receive the response synchronously (like in ~get-cursor-position~).
+
+#+BEGIN_SRC lisp
+  ;; terminal.lisp
+  (defvar *counter* 0)
+  (defun put (&rest args)
+    "Put raw string on a terminal"
+    (let* ((str (format nil "~{~a~}" args))
+           (len (length str)))
+      (incf *counter* len)
+      (princ str *terminal*)))
+
+  ;; console.lisp
+  (defun get-cursor-position ()
+    (request-cursor-position)
+    (finish-output *terminal*)
+    (handler-case (loop (read-input))
+      (cursor-position-report (c)
+        (values (row c) (col c)))))
+
+  ;;; example.lisp
+  (defun show-screen ()
+    (loop with fm = (make-instance 'frame-manager)
+          do (ensure-demos fm)
+          do (loop for event = (read-input)
+                   until (null event)
+                   do (handle-event fm event))
+          do (display-screen fm)
+          do (show-modeline)
+          do (ctl (:fls))))
+#+END_SRC
+
+This small change roughly doubles the performance, and that is very
+nice. For 25x80 terminal it is around 53fps with 125 writes per single
+cell and around 13.5M characters per second.
+
+Now let's examine our CPU and I/O bounds. First recompile ~out~ and
+~ctl~ macros to do nothing, compile-and-load ~example.lisp~ file and
+refresh the display with ~C-r~. After that probe the fps from a repl.
+
+#+BEGIN_SRC lisp
+(defmacro out ((&rest args) object))
+(defmacro ctl (&rest operations))
+;; compile-and-load example.lisp, C-r, (get-fps)
+#+END_SRC
+
+Now do the same with the following macro definitions:
+
+#+BEGIN_SRC lisp
+  (defmacro out ((&rest args))
+    `(put "x"))
+
+  (defmacro ctl (&rest operations)
+    `(let ((buf *buffer*))
+       ,@(loop for op in operations
+               collect (destructuring-bind (name &rest args) op
+                         (case name
+                           (:fls `(flush-buffer buf ,@args)))))))
+
+  ;; compile-and-load example.lisp, C-r, (get-fps)
+#+END_SRC
+
+| row x col | cells | FPS (cpu) | FPS (i/o) | VEL (cpu) | VEL (i/o) |
+|-----------+-------+-----------+-----------+-----------+-----------|
+| 25 x 80   |  2000 |    194615 |      2683 | 389230000 |   5366000 |
+| 50 x 80   |  4000 |    111795 |      1334 | 447180000 |   5336000 |
+| 87 x 159  | 13833 |     38411 |       379 | 531339363 |   5242707 |
+| 87 x 319  | 27753 |     20278 |       190 | 562775334 |   5273070 |
+
+Based on the above benchmarks we are clearly bound by the I/O.
+Previous result from the "smoke" benchmark with velocity 13.5M char/s
+may be better because the used terminal emulator processes the escape
+sequences faster (changing the color doesn't require putting anything
+on the screen). ~FPS (i/o)~ column gives us the best score we can
+possibly achieve (numbers may vary between software/hardware setups).
+
+Restore macros ~out~ and ~ctl~ as they were and reload the file
+~example.lisp~. Let's take a closer look at the data:
+
+| row x col | cells | FPS |     WCH | WPC |      VEL |
+|-----------+-------+-----+---------+-----+----------|
+| 25 x 80   |  2000 |  50 |  251330 | 125 | 12817830 |
+| 50 x 80   |  4000 |  22 |  510880 | 127 | 11239360 |
+| 87 x 159  | 13833 |   5 | 1790668 | 129 |  8953340 |
+| 87 x 319  | 27753 |   2 | 3611308 | 130 |  7222616 |
+
+Writing 100+ characters per cell seems pretty excessive. Reducing this
+number will be beneficial. Notice, that we do little too much since
+we've added the function ~put-cell~. The function sets the terminal
+cursor position and the cell colors, finally it writes the character.
+The macro ~out~ also sets row, column, foreground and background
+colors, and ~:after~ auxiliary methods configure the terminal. In
+other words for each character we:
+
+- set the cursor position and colors in ~out~
+- set the cursor position and colors in ~put-cell~
+- restore the cursor position and colors in ~out~
+
+Recompile the following methods to do nothing and then remove them:
+
+#+BEGIN_SRC lisp
+  ;; first compile, then remove
+  (defmethod (setf fgc) :after (rgba (instance console)))
+  (defmethod (setf bgc) :after (rgba (instance console)))
+  (defmethod (setf row) :after (row (instance console)))
+  (defmethod (setf col) :after (col (instance console)))
+#+END_SRC
+
+As expected, number of writes per cell drops threefold. ~WPC~ column
+is now constant (for a full screen applications which write each cell)
+and amounts 40ch/cell. Fix the ~out~ macro so it doesn't change the
+slot in console - it is unnecessary anymore.
+
+#+BEGIN_SRC lisp
+  (defmacro out ((&key row col fgc bgc) object)
+    `(let ((buf *buffer*)
+           (str (princ-to-string ,object)))
+       (assert (null (find #\newline str)))
+       (let ((row (or ,row (row buf)))
+             (col (or ,col (col buf)))
+             (fgc (or ,fgc (fgc buf)))
+             (bgc (or ,bgc (bgc buf))))
+         (loop with row = row
+               for col from col
+               for ch across str
+               do (put-cell buf row col ch fgc bgc)))))
+#+END_SRC
+
+We still do too much. Even when we draw consecutive cells we always
+set the cursor position. Same for colors. Even when there is no need
+to send the escape sequence we still do that. We'll maintain a cursor
+state (which will be separate from the "current" console colors).
+Ensuring that the terminal state is adeqate will be the responsibility
+of ~put-cell~.  Let's take one step at a time and move the logic from
+the macro ~out~ to the method ~put-cell~.
+
+#+BEGIN_SRC lisp
+(defmacro out ((&key row col fgc bgc) object)
+  `(let ((buf *buffer*)
+         (str (princ-to-string ,object)))
+     (put-cell buf ,row ,col str ,fgc ,bgc)))
+
+(defmethod put-cell ((buf console) row col str fgc bgc)
+  (let ((row (or row (row buf)))
+        (col (or col (col buf)))
+        (fgc (or fgc (fgc buf)))
+        (bgc (or bgc (bgc buf))))
+    (loop for col from col
+          for ch across (string str)
+          when (inside-p buf row col)
+            do (set-cursor-position row col)
+               (set-foreground-color fgc)
+               (set-background-color bgc)
+               (put ch))))
+#+END_SRC
+
+The function ~put-cell~ now accepts strings. That is the optimization
+opportunity (our demo application won't benefit much from that because
+each character is drawn separately). Notice that now we do interpret
+the newline character. The way it is handled clearly indicates, that
+the concept of a newline belongs to the text layout, not to the text
+itself.
+
+We do not set the cursor position for each character anymore, so we
+need to increase the cursor position when the cursor is not inside the
+buffer. We use the function ~cursor-right~ for that.
+
+#+BEGIN_SRC lisp
+  (defmethod put-cell ((buf console) row col str fgc bgc)
+    (let ((row (or row (row buf)))
+          (col (or col (col buf)))
+          (fgc (or fgc (fgc buf)))
+          (bgc (or bgc (bgc buf))))
+      (set-cursor-position row col)
+      (set-foreground-color fgc)
+      (set-background-color bgc)
+      (loop for column from col
+            for ch across str
+            if (char= ch #\newline)
+              do (incf row)
+                 (setf column col)
+                 (set-cursor-position row col)
+            else
+              do (if (inside-p buf row column)
+                     (put ch)
+                     (cursor-right)))))
+#+END_SRC
+
+Finally a separate cursor state. The function ~update-cursor-position~
+is used to modify the cursor position without sending the escape
+sequence to the terminal. ~cursor-position~ and ~cursor-colors~ are
+used to query the terminal cursor state, and their ~setf~ counterparts
+modify that state (but only when it is required).
+
+#+BEGIN_SRC lisp
+(defclass cursor ()
+  ((cvp :initarg :cvp :accessor cvp :documentation "Cursor visible?")
+   (row :initarg :row :accessor row :documentation "Cursor row")
+   (col :initarg :col :accessor col :documentation "Cursor col")
+   (fgc :initarg :fgc :accessor fgc :documentation "Foreground color")
+   (bgc :initarg :bgc :accessor bgc :documentation "Background color"))
+  (:default-initargs :cvp nil :fgc nil :bgc nil :row nil :col nil))
+
+(defmethod initialize-instance :after
+    ((instance cursor) &rest args &key fgc bgc row col cvp)
+  (declare (ignore args))
+  (set-cursor-visibility cvp)
+  (set-cursor-position row col)
+  (set-foreground-color fgc)
+  (set-foreground-color bgc))
+
+(defmethod (setf cvp) :before (cvp (cur cursor))
+  (unless (eql cvp (cvp cur))
+    (set-cursor-visibility cvp)))
+
+(defmethod (setf row) :before (row (cur cursor))
+  (unless (eql row (row cur))
+    (set-cursor-position row (col cur))))
+
+(defmethod (setf col) :before (col (cur cursor))
+  (unless (eql col (col cur))
+    (set-cursor-position (row cur) col)))
+
+(defun update-cursor-position (cursor row col)
+  (setf (slot-value cursor 'row) row
+        (slot-value cursor 'col) col))
+
+(defsetf cursor-position (cursor) (row col)
+  `(let ((crow (row ,cursor))
+         (ccol (col ,cursor)))
+     (cond ((not (or (eql crow ,row)
+                     (eql ccol ,col)))
+            (set-cursor-position ,row ,col))
+           ((not (eql crow ,row))
+            (setf (row ,cursor) ,row))
+           ((not (eql ccol ,col))
+            (setf (col ,cursor) ,col)))
+     (values ,row ,col)))
+
+(defmethod (setf fgc) :before (fgc (cur cursor))
+  (unless (eql fgc (fgc cur))
+    (set-foreground-color fgc)))
+
+(defmethod (setf bgc) :before (bgc (cur cursor))
+  (unless (eql bgc (bgc cur))
+    (set-background-color bgc)))
+
+(defsetf cursor-colors (cursor) (fgc bgc)
+  `(progn (setf (fgc ,cursor) ,fgc
+                (bgc ,cursor) ,bgc)
+          (values ,fgc ,bgc)))
+#+END_SRC
+
+Now we'll readjust the class ~console~ and its method ~put-cell~ to
+use the new class ~cursor~:
+
+#+BEGIN_SRC lisp
+  (defclass console (buffer)
+    ((ios :initarg :ios :accessor ios :documentation "Console I/O stream")
+     (cur :initarg :cur :accessor cur :documentation "Drawing cursor")
+     (ptr :initarg :ptr :accessor ptr :documentation "Pointer tracking")
+     (fps :initarg :fps :accessor fps :documentation "Desired framerate")
+     (hnd               :accessor hnd :documentation "Terminal handler"))
+    (:default-initargs :ios (error "I/O stream must be specified.")
+                       :fgc #xffa0a000
+                       :bgc #x22222200
+                       :row 1 :col 1
+                       :ptr t :fps 10 :cvp nil))
+
+  (defmethod initialize-instance :after
+      ((instance console) &rest args &key fgc bgc row col cvp ptr)
+    (setf (hnd instance) (init-terminal))
+    (set-mouse-tracking ptr)
+    (setf (cur instance)
+          (make-instance 'cursor :fgc fgc :bgc bgc :row row :col col :cvp cvp))
+    (let ((*console* instance))
+      (update-console-dimensions)))
+
+  ;; first compile, then remove
+  (defmethod (setf cvp) :after (cvp (instance console)))
+
+  (defmethod put-cell ((buf console) row col str fgc bgc)
+    (let ((cur (cur buf))
+          (row (or row (row buf)))
+          (col (or col (col buf)))
+          (fgc (or fgc (fgc buf)))
+          (bgc (or bgc (bgc buf))))
+      (setf (cursor-position cur) (values row col))
+      (setf (cursor-colors   cur) (values fgc bgc))
+      (loop with cols = (cols buf)
+            with column = col
+            for ch across str
+            if (char= ch #\newline)
+              do (incf row)
+                 (setf column col)
+                 (setf (cursor-position cur) (values row col))
+            else
+              do (if (inside-p buf row column)
+                     (put ch)
+                     (cursor-right))
+                 (if (= column cols)
+                     (setf column col
+                           row (1+ row))
+                     (incf column))
+            finally
+               (update-cursor-position cur row column))))
+#+END_SRC
+
+This change proves to be a major improvement over the previous
+abstraction when we draw to consecutive cells. We don't change the
+cursor state unless strictly necessary. After all these improvements
+it is time to look at the benchmark data:
+
+| row x col | cells | FPS |    WCH | WPC |      VEL |
+|-----------+-------+-----+--------+-----+----------|
+| 25 x 80   |  2000 | 307 |  32000 |  16 | 10000000 |
+| 50 x 80   |  4000 | 129 |  67000 |  16 |  8700000 |
+| 87 x 159  | 13833 |  20 | 235000 |  16 |  4900000 |
+| 87 x 319  | 27753 |   7 | 465000 |  16 |  2800000 |
+
+Things have improved quite a lot. 16 characters per cell is due to a
+random color - it will be less favorable if the output cell will be
+also random (like in the lambda demo).
+
+* Animations and rendering modes
+
+
+
+* extending examples
 
 Let's construct a few examples which will help us to identify some
 problems. First move functions ~start-display~, ~show-screen~ and
