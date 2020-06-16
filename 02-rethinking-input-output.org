@@ -353,17 +353,26 @@ so ~put-cell~ prints a warning.
 
   (defmethod invoke-with-clipping ((buffer buffer) cont &key r1 c1 r2 c2 fn)
     (let ((clip (clip buffer)))
-      (letf (((r1 clip) (or r1 (r1 clip)))
-             ((c1 clip) (or c1 (c1 clip)))
-             ((r2 clip) (or r2 (r2 clip)))
-             ((c2 clip) (or c2 (c2 clip)))
-             ((fn clip) (if (null fn)
-                            (fn clip)
-                            (let ((old-fn (fn clip)))
-                              (lambda (row col)
-                                (and (funcall fn row col)
-                                     (funcall old-fn row col)))))))
-        (funcall cont))))
+      (let ((old-r1 (r1 clip))
+            (old-c1 (c1 clip))
+            (old-r2 (r2 clip))
+            (old-c2 (c2 clip))
+            (old-fn (fn clip)))
+        (setf (r1 clip) (max (or r1 old-r1) old-r1)
+              (c1 clip) (max (or c1 old-c1) old-c1)
+              (r2 clip) (min (or r2 old-r2) old-r2)
+              (c2 clip) (min (or c2 old-c2) old-c2)
+              (fn clip) (if (null fn)
+                            old-fn
+                            (lambda (row col)
+                              (and (funcall fn row col)
+                                   (funcall old-fn row col)))))
+        (unwind-protect (funcall cont)
+          (setf (r1 clip) old-r1
+                (c1 clip) old-c1
+                (r2 clip) old-r2
+                (c2 clip) old-c2
+                (fn clip) old-fn)))))
 #+END_SRC
 
 Finally we can modify the console class itself. ~with-console~ binds
@@ -1128,7 +1137,8 @@ use the new class ~cursor~:
                      (cursor-right))
                  (if (= column cols)
                      (setf column col
-                           row (1+ row))
+                           row (1+ row)
+                           (cursor-position cur) (values row col))
                      (incf column))
             finally
                (update-cursor-position cur row column))))
@@ -1150,9 +1160,348 @@ Things have improved quite a lot. 16 characters per cell is due to a
 random color - it will be less favorable if the output cell will be
 also random (like in the lambda demo).
 
-* Animations and rendering modes
+* Rendering modes
+
+Let's modify the noise demo to accept a sequence of colors from which
+the foreground color is drawed by lot. The class frame will have one
+more slot named "ap" for the frame data.
+
+#+BEGIN_SRC lisp
+  (defclass frame (bbox)
+    ((fn :initarg :fn :accessor fn)
+     (ap :initarg :ap :accessor ap))
+    (:default-initargs :r1 1 :c1 1 :r2 24 :c2 80 :ap nil
+                       :fn (constantly t)))
 
 
+  (defun noise-demo (frame)
+    (loop for row from (r1 frame) upto (r2 frame)
+          do (loop for col from (c1 frame) upto (c2 frame)
+                   do (out (:row row
+                            :col col
+                            :bgc (alexandria:random-elt `(#x00000000 #x08080800))
+                            :fgc (alexandria:random-elt (ap frame)))
+                           (alexandria:random-elt '("+" "-"))))))
+
+  (defun make-noise-demo (&rest args)
+    (let ((frame (apply #'make-instance 'frame :fn #'noise-demo args)))
+      (unless (ap frame)
+        (setf (ap frame) '(#xffff8800 #x88ffff00)))
+      frame))
+#+END_SRC
+
+Now let's bring back decorations and run a few demos:
+
+#+BEGIN_SRC lisp
+  (defun display-screen (fm)
+    (dolist (frame (frames fm))
+      (if (eq frame (active fm))
+          (ctl (:bgc #x22224400) (:fgc #xffffff00))
+          (ctl (:bgc #x11111100) (:fgc #xbbbbbb00)))
+      (render-decorations fm frame)
+      (render-application fm frame))
+    (ctl (:bgc #x11111100) (:fgc #xbbbbbb00)))
+
+  (defun ensure-demos (fm)
+    (unless (frames fm)
+      (setf (frames fm)
+            (list (make-noise-demo :r1 10 :c1 20 :r2 20 :c2 60 :ap '(#xff000000))
+                  (make-noise-demo :r1 15 :c1 40 :r2 25 :c2 80 :ap '(#x00ff0000))
+                  (make-lambda-demo :r1 1 :c1 1 :r2 12 :c2 40)))))
+#+END_SRC
+
+Uh oh, something interesting is happening. Despite a very high 950fps
+we can see a flicker! Not only that, lambda demo which is drawn last,
+and rightfully should be on top, is obscured by the red noise demo.
+
+#+CAPTION: Flickering windows
+#+NAME:   fig:flicker
+[[./static/02-flicker.webm]]
+
+The flicker is because of how we draw things. We put each cell
+immedietely, so first we draw the first window, then on top of it the
+second window and then on top of it the third window. After that we
+repeat the process. That means that if we have two intersecting
+windows, then for part of the time it will have a content of the first
+window and for the rest of a time a content of the second one.
+
+The issue with the lambda demo not being on top is slightly different.
+In this demo we draw only one cell per frame, so only one cell may be
+drawn on top of the other window, and then the noise demo redraws a
+full window.
+
+Another problem which is not visible is a performance penalty. If we
+are bound by I/O, then drawing multiple times the same cell is very
+suboptimal. Ideally we'd modify each cell only once per frame.
+
+We'll call the currently exhibited behavior a "direct rendering". Time
+to introduce a second mode, which we'll call an "indirect rendering".
+The idea is to buffer the data in an array and when we flush the
+virtual buffer to redraw damaged parts of a terminal.
+
+Direct rendering is useful in some applications, so we'll retain this
+functionality and allow switching rendering mode for each buffer with
+the ~ctl~ interface. Three modes will be defined: a direct rendering,
+an indirect rendering and a write-through rendering. The last one will
+combine the two: it will put the cell on the screen immedietely but it
+will also save its content in a buffer. We'll add three new functions
+to the virtual buffer protocol.
+
+#+BEGIN_SRC lisp
+  (defgeneric set-cell (buffer row col str fg bg))
+  (defgeneric rnd (buffer))
+  (defgeneric (setf rnd) (buffer mode)
+    (:argument-precedence-order buffer mode))
+#+END_SRC
+
+The function ~set-cell~ is responsible for "doing the right thing",
+that is either putting it directly on a screen or saving it in the
+internal array (or both). The accessor ~rnd~ is used to read and write
+the buffer rendering mode. The macro ~out~ calls now the function
+~set-cell~ and the macro ~ctl~ has a new option ~:rnd~.
+
+#+BEGIN_SRC lisp
+  (defmacro out ((&key row col fgc bgc) object)
+    `(let ((buf *buffer*)
+           (str (princ-to-string ,object)))
+       (set-cell buf ,row ,col str ,fgc ,bgc)))
+
+  (defmacro ctl (&rest operations)
+    `(let ((buf *buffer*))
+       ,@(loop for op in operations
+               collect (destructuring-bind (name &rest args) op
+                         (ecase name
+                           (:fgc `(setf (fgc buf) ,@args))
+                           (:bgc `(setf (bgc buf) ,@args))
+                           (:row `(setf (row buf) ,@args))
+                           (:col `(setf (col buf) ,@args))
+                           (:rnd `(setf (rnd buf) ,@args))
+                           (:clr `(clear-rectangle ,@args))
+                           (:fls `(flush-buffer buf ,@args)))))))
+#+END_SRC
+
+We'll optimize the rendering by tracking dirty cells. If the cell is
+not "dirty", then there is no need to put it on the terminal (that
+applies only to the indirect rendering mode). Cells will be stored in
+the array stored in a buffer's slot ~data~. We'll also add a slot for
+the rendering mode.
+
+#+BEGIN_SRC lisp
+  (defclass cell ()
+    ((ch :initarg :ch :accessor ch)
+     (fg :initarg :fg :accessor fg)
+     (bg :initarg :bg :accessor bg)
+     (dirty-p :initarg :dirty-p :accessor dirty-p))
+    (:default-initargs :ch #\space
+                       :fg (fgc *buffer*)
+                       :bg (bgc *buffer*)
+                       :dirty-p t))
+
+  (defclass buffer ()
+    ((fgc :initarg :fgc :accessor fgc :documentation "Foregorund color")
+     (bgc :initarg :bgc :accessor bgc :documentation "Background color")
+     (row :initarg :row :accessor row :documentation "Current row")
+     (col :initarg :col :accessor col :documentation "Current col")
+     (rnd :initarg :rnd :accessor rnd :documentation "Rendering mode")
+     (clip :initarg :clip :accessor clip :documentation "Clipping object")
+     (data :initarg :data :accessor data :documentation "Data buffer")
+     (rows :initarg :rows :accessor rows :documentation "Buffer number of rows")
+     (cols :initarg :cols :accessor cols :documentation "Buffer number of cols"))
+    (:default-initargs :fgc #xffa0a0
+                       :bgc #x222222
+                       :row 1
+                       :col 1
+                       :rnd :buf
+                       :data (make-array (list 0 0) :adjustable t)
+                       :clip (make-instance 'clip)))
+#+END_SRC
+
+Accessing the cell will be abstracted away with a function ~get-cell~.
+The function translates the terminal index (starting with [1, 1]) to
+the array index. If the element is outside of the array, it will
+return a "dummy" cell, otherwise it will return the array element.
+Array elements are lazily initialized when accessed. Function will
+always return an object of the class ~cell~.
+
+#+BEGIN_SRC lisp
+  (defmethod get-cell ((buf buffer) row col)
+    (let ((data (data buf))
+          (i0 (1- row))
+          (i1 (1- col)))
+      (if (array-in-bounds-p data i0 i1)
+          (or (aref data i0 i1)
+              (setf (aref data i0 i1) (make-instance 'cell)))
+          (load-time-value
+           (make-instance 'cell :ch #\space :fg #xffffff00 :bg #x00000000)))))
+#+END_SRC
+
+The array with data has initially dimensions ~(0 0), so we need to
+update them when the console dimensions change.
+
+#+BEGIN_SRC lisp
+(defun update-console-dimensions ()
+  (with-cursor-position ((expt 2 16) (expt 2 16))
+    (multiple-value-bind (rows cols)
+        (get-cursor-position)
+      (setf (rows *console*) rows)
+      (setf (cols *console*) cols)
+      (setf (r2 (clip *console*)) rows)
+      (setf (c2 (clip *console*)) cols)
+      (adjust-array (data *console*)
+                    (list rows cols)
+                    :initial-element nil))))
+#+END_SRC
+
+Functions ~put-cell~ and ~set-cell~ both work on strings. To abstract
+the iteration away we'll introduce the macro ~iterate-cells~. This
+function is responsible for updating the row and the column variables
+when iterating over the string, so they indicate the correct cell.
+Function "wraps", that if we go beyond the last row, we'll start from
+the first row (similarily for columns).
+
+#+BEGIN_SRC lisp
+  (defmacro iterate-cells ((ch crow ccol wrap)
+                           (buf row col str)
+                           &body body)
+    (alexandria:with-gensyms (cols rows)
+      `(loop with ,rows = (rows ,buf)
+             with ,cols = (cols ,buf)
+             with ,crow = ,row
+             with ,ccol = ,col
+             with ,wrap = nil
+             for ,ch across ,str
+             do (progn ,@body)
+                (setf ,wrap nil)
+             if (eql ,ch #\newline)
+               do (setf ,ccol 1
+                        ,wrap t)
+                  (if (= ,crow ,rows)
+                      (setf ,crow 1)
+                      (incf ,crow 1))
+             else
+               do (if (= ,ccol ,cols)
+                      (setf ,ccol 1
+                            ,crow (1+ ,crow)
+                            ,wrap t)
+                      (incf ,ccol))
+             finally (return (values ,crow ,ccol)))))
+
+  (defmethod put-cell ((buf console) row col str fgc bgc)
+    (let ((cur (cur buf))
+          (row (or row (row buf)))
+          (col (or col (col buf)))
+          (fgc (or fgc (fgc buf)))
+          (bgc (or bgc (bgc buf))))
+      (setf (cursor-position cur) (values row col))
+      (setf (cursor-colors   cur) (values fgc bgc))
+      (multiple-value-bind (final-row final-col)
+          (iterate-cells (ch crow ccol wrap-p)
+              (buf row col (string str))
+            (when wrap-p
+              (setf (cursor-position cur) (values crow ccol)))
+            (if (inside-p buf crow ccol)
+                (put ch)
+                (cursor-right)))
+        (update-cursor-position cur final-row final-col))))
+#+END_SRC
+
+Finally the function ~set-cell~ will trace the cell state and modify
+its cached value disregarding of the rendering mode. When a cell is
+dirty it means that it should be redrawn when flushing the buffer in
+the indirect rendering mode.
+
+#+BEGIN_SRC lisp
+  (defmethod set-cell ((buf buffer) row col str fgc bgc)
+    (let ((rendering-mode (rnd buf))
+          (row (or row (row buf)))
+          (col (or col (col buf))))
+      (iterate-cells (ch crow ccol wrap-p)
+          (buf row col (string str))
+        (when (inside-p buf crow ccol)
+          (let* ((cell (get-cell buf crow ccol))
+                 (clean (and (not (dirty-p cell))
+                             (eql ch (ch cell))
+                             (eql fgc (fg cell))
+                             (eql bgc (bg cell)))))
+            (unless clean
+              (setf (ch cell) ch
+                    (fg cell) (or fgc (fgc buf))
+                    (bg cell) (or bgc (bgc buf))))
+            (setf (dirty-p cell)
+                  (and (not clean)
+                       (not (eq rendering-mode :wrt)))))))
+      (when (member rendering-mode '(:dir :wrt))
+        (put-cell buf row col str fgc bgc))))
+#+END_SRC
+
+When we change the console rendering mode to ~:buf~ we'll see
+nothing. The method ~flush-buffer~ should flush the array onto the
+terminal. A naive implementation looks like this:
+
+#+BEGIN_SRC lisp
+  (defmethod flush-buffer ((buffer console) &rest args)
+    (declare (ignore args))
+    (loop for row from 1 upto (rows buffer)
+          do (loop for col from 1 upto (cols buffer)
+                   for cell = (get-cell buffer row col)
+                   do (put-cell buffer row col (ch cell) (fg cell) (bg cell))))
+    (finish-output *terminal*))
+#+END_SRC
+
+However we may take the advantage of information about whether the
+cell is clean. Moreover, we know that cells are always consecutive
+unless we wrap over the right edge.
+
+#+BEGIN_SRC lisp
+  (defmethod flush-buffer ((buffer console) &rest args &key force)
+    (declare (ignore args))
+    (let* ((cursor (cur buffer))
+           (last-fg (fgc cursor))
+           (last-bg (bgc cursor))
+           (gap 0))
+      (set-cursor-position 1 1)
+      (iterate-cells (cell crow ccol wrap-p)
+          (buffer 1 1 (make-array (* (cols buffer)
+                                     (rows buffer))
+                                  :displaced-to (data buffer)))
+        (when wrap-p
+          (set-cursor-position crow ccol)
+          (setf gap 0))
+        (if (and cell (or force (dirty-p cell)))
+            (let ((ch (ch cell))
+                  (fg (fg cell))
+                  (bg (bg cell)))
+              (unless (= fg last-fg)
+                (set-foreground-color fg)
+                (setf last-fg fg))
+              (unless (= bg last-bg)
+                (set-background-color bg)
+                (setf last-bg bg))
+              (when (plusp gap)
+                (cursor-right gap)
+                (setf gap 0))
+              (put ch)
+              (setf (dirty-p cell) nil))
+            (if force
+                (put #\space)
+                (incf gap))))
+      (set-cursor-position (row cursor) (col cursor))
+      (set-foreground-color (fgc cursor))
+      (set-background-color (bgc cursor)))
+    (finish-output *terminal*))
+#+END_SRC
+
+#+CAPTION: Buffered frames
+#+NAME:   fig:buffering
+[[./static/02-buffering.webm]]
+
+It is worth noting that [[https://turtleware.eu/posts/Conformal-array-displacement.html][conformally displaced arrays]] with a
+multi-dimensional fill pointer would save us work with adjusting the
+array. Another noteworthy thing is that a virtual buffer without a
+specialization may be used in a buffered mode and it will have its
+contents drawn without any output sink.
+
+* Surface buffers
 
 * extending examples
 
