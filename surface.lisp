@@ -1,39 +1,27 @@
 (in-package #:eu.turtleware.charming-clim)
 
-(defclass surface (buffer)
-  ((vbuf :initarg :vbuf :accessor vbuf :documentation "Underlying vbuffer")
+(defclass surface (buffer bbox)
+  ((sink :initarg :sink :accessor sink :documentation "Flush destination")
    (row0 :initarg :row0 :accessor row0 :documentation "Scroll row offset")
-   (col0 :initarg :col0 :accessor col0 :documentation "Scroll col offset")
-   (r1 :initarg :r1 :accessor r1 :documentation "Displacement row offset")
-   (c1 :initarg :c1 :accessor c1 :documentation "Displacement col offset")
-   (r2 :initarg :r2 :accessor r2 :documentation "Fill pointer row")
-   (c2 :initarg :c2 :accessor c2 :documentation "Fill pointer col"))
-  (:default-initargs :vbuf (error "VBuf is obligatory")
-                     :clip nil
-                     :row0 0
-                     :col0 0))
+   (col0 :initarg :col0 :accessor col0 :documentation "Scroll col offset"))
+  (:default-initargs :row0 0 :col0 0))
 
 (defmethod initialize-instance :after
-    ((buf surface) &key r1 c1 r2 c2 rows cols)
-  (unless rows
-    (setf rows (1+ (- r2 r1)))
-    (setf (rows buf) rows))
-  (unless cols
-    (setf cols (1+ (- c2 c1)))
-    (setf (cols buf) cols))
-  (setf (clip buf) (make-instance 'clip :r2 rows :c2 cols)
-        (data buf) (make-array (list rows cols)
-                               :adjustable t
-                               :initial-element nil)))
+    ((buf surface) &key rows cols)
+  (let ((clip (clip buf)))
+    (setf (r2 clip) rows
+          (c2 clip) cols))
+  (adjust-array (data buf) (list rows cols) :initial-element nil))
 
 (defmethod put-cell ((buf surface) row col ch fg bg)
-  (let ((vrow (1- (+ (r1 buf) (- (row0 buf)) row)))
-        (vcol (1- (+ (c1 buf) (- (col0 buf)) col))))
+  (let ((vrow (- (+ (r1 buf) row) (row0 buf) 1))
+        (vcol (- (+ (c1 buf) col) (col0 buf) 1)))
     (when (and (<= (r1 buf) vrow (r2 buf))
                (<= (c1 buf) vcol (c2 buf)))
-      (set-cell (vbuf buf) vrow vcol ch fg bg))))
+      (set-cell (sink buf) vrow vcol ch fg bg))))
 
-(defmethod flush-buffer ((buffer surface) &key r1 c1 r2 c2 force)
+(defmethod flush-buffer ((buffer surface) &rest args &key force)
+  (declare (ignore args))
   (loop for row from 1 upto (rows buffer)
         do (loop for col from 1 upto (cols buffer)
                  for cell = (get-cell buffer row col)
@@ -65,6 +53,11 @@
                    (>= vcol2 width)))
       (setf (col0 buf) col0))))
 
+#+ (or) ;; naive version
+(defun scroll-buffer (buf row-dx col-dx)
+  (incf (row0 buf) row-dx)
+  (incf (col0 buf) col-dx))
+
 (defun scroll-buffer (buf row-dx col-dx)
   (flet ((quantity (screen-size buffer-size dx)
            (if (alexandria:xor (> screen-size buffer-size)
@@ -81,3 +74,9 @@
         (or (move-to-col buf (+ (col0 buf) col-dx))
             (setf (col0 buf)
                   (quantity width (cols buf) col-dx)))))))
+
+(defun move-buffer (buf row-dx col-dx)
+  (incf (r1 buf) row-dx)
+  (incf (r2 buf) row-dx)
+  (incf (c1 buf) col-dx)
+  (incf (c2 buf) col-dx))

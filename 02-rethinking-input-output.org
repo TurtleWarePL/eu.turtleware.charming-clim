@@ -1194,10 +1194,13 @@ Now let's bring back decorations and run a few demos:
 
 #+BEGIN_SRC lisp
   (defun display-screen (fm)
+    (ctl (:bgc #x33333300) (:fgc #xbbbbbb00))
     (dolist (frame (frames fm))
-      (if (eq frame (active fm))
-          (ctl (:bgc #x22224400) (:fgc #xffffff00))
-          (ctl (:bgc #x11111100) (:fgc #xbbbbbb00)))
+      (unless (eq frame (active fm))
+        (render-decorations fm frame)
+        (render-application fm frame)))
+    (alexandria:when-let ((frame (active fm)))
+      (ctl (:bgc #x33336600) (:fgc #xffffff00))
       (render-decorations fm frame)
       (render-application fm frame))
     (ctl (:bgc #x11111100) (:fgc #xbbbbbb00)))
@@ -1495,1635 +1498,315 @@ unless we wrap over the right edge.
 #+NAME:   fig:buffering
 [[./static/02-buffering.webm]]
 
-It is worth noting that [[https://turtleware.eu/posts/Conformal-array-displacement.html][conformally displaced arrays]] with a
-multi-dimensional fill pointer would save us work with adjusting the
-array. Another noteworthy thing is that a virtual buffer without a
-specialization may be used in a buffered mode and it will have its
-contents drawn without any output sink.
+* Surfaces
 
-* Surface buffers
+We have two problems with the lambda application: the demo can't be
+moved (because it starts drawing from ~[1,1]~) and that it is obscured
+by a noise demo frame due to infrequent writes. We will now detach the
+notion of the application buffer and the console buffer. Our job would
+be much easier if we had [[https://turtleware.eu/posts/Conformal-array-displacement.html][conformally displaced arrays]] at our disposal
+- a multi-dimensional fill pointer and displacement offset would allow
+us to map coordinates transparently. That said we can easily abstract
+all that away, because we do not expose naked arrays in the API.
 
-* extending examples
-
-Let's construct a few examples which will help us to identify some
-problems. First move functions ~start-display~, ~show-screen~ and
-~user-action~ to a separate file ~examples.lisp~ (don't forget to add
-this file to the system definition).
-
-First we'll rework slightly our abstraction. First of all we'll
-introduce a frame-manager class which will be responsible for
-multiplexing input and output on the screen. It has two slots:
-
-- frames :: a list of managed windows
-- active :: the active window
-
-For a time being when there is an active frame, only this frame is
-rendered. Otherwise all frames are rendered.
-
-All events will be passed to the function ~handle-event~. We'll bind
-few keys initially: C-q will exit the application and C-r will remove
-all frames and clear the screen.
+To make the issue more apparent we'll move the lambda demo and make
+its window smaller than the actual output.
 
 #+BEGIN_SRC lisp
-  (defclass frame-manager ()
-    ((frames :initarg :frames :accessor frames :documentation "All frames.")
-     (active :initarg :active :accessor active :documentation "Active frame."))
-    (:default-initargs :frames nil :active nil))
+  (defun ensure-demos (fm)
+    (unless (frames fm)
+      (setf (frames fm)
+            (list (make-noise-demo :r1 8 :c1 25 :r2 20 :c2 60 :ap '(#x00ff0000))
+                  (make-lambda-demo :r1 5 :c1 20 :r2 16 :c2 45)))))
+#+END_SRC
+
+#+CAPTION: Lambda problems
+#+NAME: fig:no-surface
+[[./static/02-no-surface.webm]]
+
+Each application will be rendered on a "surface", that is a virtual
+buffer which is displaced onto the console. Surface's internal buffer
+starts from coordinates ~[1,1]~ like the console, and then when we
+call ~put-cell~, the coordinates are transformed, and ~set-cell~ is
+called on the console. The way surfaces are defined means that they
+may be stacked (that is the external buffer of a surface may be a
+virtual buffer which is another surface or something else). Add a new
+file ~surface.lisp~ to the project.
+
+#+BEGIN_SRC lisp
+(defclass surface (buffer bbox)
+  ((sink :initarg :sink :accessor sink :documentation "Flush destination")))
+
+(defmethod initialize-instance :after
+    ((buf surface) &key rows cols)
+  (let ((clip (clip buf)))
+    (setf (r2 clip) rows
+          (c2 clip) cols))
+  (adjust-array (data buf) (list rows cols) :initial-element nil))
+
+(defmethod put-cell ((buf surface) row col ch fg bg)
+  (let ((vrow (1- (+ (r1 buf) row)))
+        (vcol (1- (+ (c1 buf) col))))
+    (when (and (<= (r1 buf) vrow (r2 buf))
+               (<= (c1 buf) vcol (c2 buf)))
+      (set-cell (sink buf) vrow vcol ch fg bg))))
+
+(defmethod flush-buffer ((buffer surface) &rest args &key force)
+  (declare (ignore args))
+  (loop for row from 1 upto (rows buffer)
+        do (loop for col from 1 upto (cols buffer)
+                 for cell = (get-cell buffer row col)
+                 when (or force (dirty-p cell))
+                   do (put-cell buffer row col (ch cell) (fg cell) (bg cell))
+                      (setf (dirty-p cell) nil))))
+#+END_SRC
+
+And we'll make the class ~frame~ inherit from the class ~surface~:
+
+#+BEGIN_SRC lisp
+(defclass frame (surface)
+  ((fn :initarg :fn :accessor fn)
+   (ap :initarg :ap :accessor ap))
+  (:default-initargs :r1 1 :c1 1 :r2 24 :c2 80
+                     :rows 24
+                     :cols 80
+                     :sink *buffer*
+                     :fn (constantly t) :ap nil))
+#+END_SRC
+
+Now when we render the application, we render to its own buffer which
+we need to flush afterwards.
+
+#+BEGIN_SRC lisp
+(defun render-application (fm frame)
+  (declare (ignore fm))
+  (with-buffer (frame)
+    (funcall (fn frame) frame)
+    (ctl (:fls))))
+#+END_SRC
+
+Finally both demos need to supply their number of rows, columns and
+they always render starting from ~[1,1]~. The function ~lambda-demo~
+doesn't need changes, but the function ~noise-demo~ does, because it
+started drawing from ~(r1 frame)~. Lambda demo size is known while for
+the noise demo it is inferred from the surface displacement.
+
+#+BEGIN_SRC lisp
+  (defun noise-demo (frame)
+    (loop for row from 1 upto (rows frame)
+          do (loop for col from 1 upto (cols frame)
+                   do (out (:row row
+                            :col col
+                            :bgc (alexandria:random-elt `(#x00000000 #x08080800))
+                            :fgc (alexandria:random-elt (ap frame)))
+                           (alexandria:random-elt '("+" "-"))))))
+
+  (defun make-lambda-demo (&rest args)
+    (apply #'make-instance 'frame :fn #'lambda-demo :rows 12 :cols 40
+           args))
+
+  (defun make-noise-demo (&rest args)
+    (let ((frame (apply #'make-instance 'frame :fn #'noise-demo args)))
+      (unless (ap frame)
+        (setf (ap frame) '(#xffff8800 #x88ffff00)))
+      (setf (rows frame) (1+ (- (r2 frame) (r1 frame)))
+            (cols frame) (1+ (- (c2 frame) (c1 frame))))
+      frame))
+#+END_SRC
+
+Lambda is now properly offset, but the noise demo is still
+overexposed.
+
+#+CAPTION: Lambda problems
+#+NAME: fig:surface
+[[./static/02-surface.webm]]
+
+We may easily address this problem by forcing all cells to be
+flushed.
+
+#+BEGIN_SRC lisp
+  (defun render-application (fm frame)
+    (declare (ignore fm))
+    (with-buffer (frame)
+      (funcall (fn frame) frame)
+      (ctl (:fls :force t))))
+#+END_SRC
+
+#+CAPTION: Lambda problems
+#+NAME: fig:surface
+[[./static/02-surface-flush.webm]]
+
+The last missing functionality is scrolling. The lambda demo does not
+fit in its window. We'll introduce two slots in the ~surface~ which
+will represent the offset for the top-left corner of the buffer. For
+instance when the offset row is 3, then the third row of the buffer
+will be shown as the first row in the window. We only need to modify
+the function ~put-cell~ to account for that.
+
+#+BEGIN_SRC lisp
+  (defclass surface (buffer bbox)
+    ((sink :initarg :sink :accessor sink :documentation "Flush destination")
+     (row0 :initarg :row0 :accessor row0 :documentation "Scroll row offset")
+     (col0 :initarg :col0 :accessor col0 :documentation "Scroll col offset"))
+    (:default-initargs :row0 0 :col0 0))
+
+  (defmethod put-cell ((buf surface) row col ch fg bg)
+    (let ((vrow (- (+ (r1 buf) row) (row0 buf) 1))
+          (vcol (- (+ (c1 buf) col) (col0 buf) 1)))
+      (when (and (<= (r1 buf) vrow (r2 buf))
+                 (<= (c1 buf) vcol (c2 buf)))
+        (set-cell (sink buf) vrow vcol ch fg bg))))
+
+  (defun scroll-buffer (buf row-dx col-dx)
+    (incf (row0 buf) row-dx)
+    (incf (col0 buf) col-dx))
+
+  (defun move-buffer (buf row-dx col-dx)
+    (incf (r1 buf) row-dx)
+    (incf (r2 buf) row-dx)
+    (incf (c1 buf) col-dx)
+    (incf (c2 buf) col-dx))
+#+END_SRC
+
+We'll add now new key bindings in ~handle-event~ to scroll and move
+the window. This way we will gain some intuition of how it should
+work. When rendering decorations we will indicate that some of the
+output is not visible by the character ~#\&~. To avoid glitches we
+will also clear a whole screen in the function ~display-screen~ and
+clear the window background in ~render-decorations~.
+
+#+BEGIN_SRC lisp
+  (defun render-decorations (fm frame)
+    (declare (ignore fm))
+    (let ((r1 (r1 frame))
+          (c1 (c1 frame))
+          (r2 (r2 frame))
+          (c2 (c2 frame)))
+      (ctl (:clr r1 c1 r2 c2))
+      (loop with col = (1+ c2)
+            for row from (1+ r1) upto (1- r2)
+            do (out (:row row :col col) " ")
+            finally (out (:col col :row r1 :fgc #xff224400) "x")
+                    (when (or (> (rows frame) (1+ (- r2 r1)))
+                              (> (cols frame) (1+ (- c2 c1))))
+                      (out (:col col :row (1- r2)) "&"))
+                    (out (:col col :row r2) "/"))))
+
+  (defun display-screen (fm)
+    (ctl (:clr 1 1 (rows *console*) (cols *console*))
+         (:bgc #x33333300) (:fgc #xbbbbbb00))
+    (dolist (frame (frames fm))
+      (unless (eq frame (active fm))
+        (render-decorations fm frame)
+        (render-application fm frame)))
+    (alexandria:when-let ((frame (active fm)))
+      (ctl (:bgc #x33336600) (:fgc #xffffff00))
+      (render-decorations fm frame)
+      (render-application fm frame))
+    (ctl (:bgc #x11111100) (:fgc #xbbbbbb00)))
 
   (defun handle-event (fm event)
     (flet ((reset ()
-             (setf (frames fm) nil
-                   (active fm) nil)
-             (clear-console)))
+             (update-console-dimensions)
+             (clear-terminal)
+             (ctl (:bgc #x22222200)
+                  (:clr 1 1 (rows *console*) (cols *console*)))))
       (cond ((keyp event #\Q :c)
              (cl-user::quit))
             ((keyp event #\R :c)
-             (reset)))))
-
-  (defun display-screen (fm)
-    (alexandria:if-let ((frame (active fm)))
-      (render-frame frame)
-      (dolist (frame (frames fm))
-        (render-frame frame))))
-
-  (defun render-frame (huh?)
-    (declare (ignore huh?))
-    (error "niy!"))
+             (reset)
+             (setf (frames fm) nil)
+             (setf (active fm) nil)
+             (ensure-demos fm))
+            ((keyp event :f5)
+             (ctl (:fls :force t)))
+            ((keyp event #\N :c)
+             (alexandria:if-let ((cur (active fm)))
+               (let* ((fms (frames fm))
+                      (pos (position cur fms))
+                      (new (1+ pos)))
+                 (if (= new (length fms))
+                     (setf (active fm) nil)
+                     (setf (active fm) (elt fms new))))
+               (setf (active fm) (first (frames fm)))))
+            ((keyp event #\U :c)
+             (ignore-errors (user-action)))
+            ((keyp event #\E :c)
+             (error "bam"))
+            ((keyp event :key-up)
+             (alexandria:when-let ((frame (active fm)))
+               (scroll-buffer frame -1 0)))
+            ((keyp event :key-left)
+             (alexandria:when-let ((frame (active fm)))
+               (scroll-buffer frame 0 -1)))
+            ((keyp event :key-down)
+             (alexandria:when-let ((frame (active fm)))
+               (scroll-buffer frame 1 0)))
+            ((keyp event :key-right)
+             (alexandria:when-let ((frame (active fm)))
+               (scroll-buffer frame 0 1)))
+            ((keyp event :key-up :c)
+             (alexandria:when-let ((frame (active fm)))
+               (move-buffer frame -1 0)))
+            ((keyp event :key-down :c)
+             (alexandria:when-let ((frame (active fm)))
+               (move-buffer frame 1 0)))
+            ((keyp event :key-left :c)
+             (alexandria:when-let ((frame (active fm)))
+               (move-buffer frame 0 -1)))
+            ((keyp event :key-right :c)
+             (alexandria:when-let ((frame (active fm)))
+               (move-buffer frame 0 1))))))
 #+END_SRC
 
-Now let's refactor the function ~start-display~. It will a modeline at
-the top and display the terminal dimensions and the frame rate.
-Moreover it will create a frame manager and will be responsible for
-calling previously defined functions. When we start the application,
-we'll see a heart warming message "We are that good!", meaning that we
-are too fast to measure the FPS.
+As a reminder, we change the active window with ~C-n~. Scrolling is
+done with arrows, and moving the window is done with ~C-arrow~.
+
+#+CAPTION: Scrolling and moving windows
+#+NAME:   fig:surface-scroll
+[[./static/02-surface-scroll.webm]]
+
+While experimenting with the window you may notice some inconsistency:
+scrolling moves the content in the opposite direction than moving the
+window (if we use the same arrow key). This discrepancy may be
+described with an analogy of a cursor: when you scroll right, you move
+an invisible cursor beyond the right edge, so the content is moved
+left to reveal what is under the "cursor". Alternative strategy, where
+pressing "right" moves the content to the right, could be described in
+terms of a touchscreen: you hold part of the screen and move it to the
+right, so the content moves along your finger. To signify a difference
+we'll talk about the "cursor scrolling" and the "finger scrolling".
+
+The last step is to ensure, that we don't scroll too much. Content
+scrolling should stop if we reach the maximum. What is considered the
+maximum depends on whether the window is bigger or smaller then the
+buffer. Consider two cases when cursor-scrolling down:
+
+- the window is smaller than the content :: the scrolling stops when
+     the bottom side of a buffer reaches the bottom side of a window
+
+- the window is bigger than the content :: the scrolling stops when
+     the top side of a buffer reaches the top side of a window
+
+Let's add two lambda demos to illustrate the difference:
 
 #+BEGIN_SRC lisp
-  (defun start-display ()
-    (swank:create-server)
-    (with-console (:ios *terminal-io*)
-      (clear-console)
-      (loop with rows = (rows *console*)
-            with cols = (cols *console*)
-            with fm = (make-instance 'frame-manager)
-            do (when *console-dirty-p*
-                 (update-console-dimensions)
-                 (setf rows (rows *console*)
-                       cols (cols *console*)))
-            do (loop for ch = (read-input)
-                     until (null ch)
-                     do (handle-event fm ch))
-            do (let (start stop delta)
-                 (setf start (get-internal-real-time))
-                 (display-screen fm)
-                 (setf stop (get-internal-real-time))
-                 (setf delta (/ (- stop start)
-                                internal-time-units-per-second))
-                 (ctl (:fgc #x22 #x22 #x22)
-                      (:bgc #xbb #xbb #xbb))
-                 (let* ((status (format nil "Rows ~3d, Cols ~3d, FPS ~8,2f"
-                                        (1- rows) cols (if (zerop delta)
-                                                           :|We are that good!|
-                                                           (/ 1.0 delta))))
-                        (len (length status)))
-                   (ctl (:clr 1 (1+ len) 1 cols))
-                   (out (:col 1 :row 1) status))
-                 (ctl (:fgc #xff #xa0 #xa0)
-                      (:bgc #x22 #x22 #x22))))))
+  (defun ensure-demos (fm)
+    (unless (frames fm)
+      (setf (frames fm)
+            (list (make-lambda-demo :r1 2 :c1 4 :r2 6 :c2 43)
+                  (make-lambda-demo :r1 9 :c1 4 :r2 23 :c2 43)))))
 #+END_SRC
 
-Now we'll define the class for a frame. A frame will be defined by its
-clipping region and a rendering function.
-
-#+BEGIN_SRC lisp
-  (defclass frame ()
-    ((rfn :initarg :rfn :accessor rfn :documentation "Rendering function.")
-     (fsz :initarg :fsz :accessor fsz :documentation "Frame dimensions.")))
-
-  (defun render-frame (frame)
-    (destructuring-bind (r1 c1 r2 c2) (fsz frame)
-      (with-clipping (:row1 r1 :col1 c1 :row2 r2 :col2 c2)
-        (funcall (rfn frame) frame))))
-#+END_SRC
-
-For amusement and to have something to render, we'll define three
-demos to illustrate some issues.
-
-The noise demo is like a white noise, but in color :-). It fills each
-cell with a different random color. We will use it as the rendering
-performance benchmark and to illustrate how overlapping frames behave.
-
-#+BEGIN_SRC lisp
-  (defun make-noise-frame (r1 c1 r2 c2)
-    (flet ((make-noise-renderer (color)
-             (lambda (frame)
-               (destructuring-bind (r1 c1 r2 c2) (fsz frame)
-                 (loop for row from r1 upto r2
-                       do (loop for col from c1 upto c2
-                                do (out (:row row
-                                         :col col
-                                         :bgc `(0 0 0)
-                                         :fgc color)
-                                        (alexandria:random-elt '("+" "-")))))))))
-      (make-instance 'frame
-                     :rfn (make-noise-renderer
-                           (list (alexandria:random-elt '(#x22 #x88 #xff))
-                                 (alexandria:random-elt '(#x22 #x88 #xff))
-                                 (alexandria:random-elt '(#x22 #x88 #xff))))
-                     :fsz (list r1 c1 r2 c2))))
-#+END_SRC
-
-The animation demo will show a moving square bouncing from the frame
-edges. We will use it to illustrate a flicker which happens when we
-first clear the background and then draw it content even when the FPS
-rate is high. The animation speed does not depend on the fps.
-
-#+BEGIN_SRC lisp
-  (defun make-animation-frame (r1 c1 r2 c2 speed)
-    (let ((last-time (get-internal-real-time))
-          (dc 1)
-          (current-row (truncate (+ r1 r2) 2))
-          (current-col (+ c1 2)))
-      (flet ((draw-square ()
-               (ctl (:bgc #x44 #x44 #x00)
-                    (:fgc #xff #xbb #x00)
-                    (:clr r1 c1 r2 c2))
-               (let* ((now (get-internal-real-time))
-                      (delta (- now last-time))
-                      (seconds (/ delta internal-time-units-per-second)))
-                 (incf current-col (* seconds speed dc))
-                 (setf last-time now))
-               (cond ((>= (+ current-col 2) c2)
-                      (setf dc -1))
-                     ((<= (- current-col 2) c1)
-                      (setf dc +1)))
-               (setf current-col
-                     (alexandria:clamp current-col (+ c1 2) (- c2 2)))
-               (loop with row = current-row
-                     with col = (round current-col)
-                     for r from (1- row) upto (1+ row)
-                     do (loop for c from (- col 2) upto (+ col 2)
-                              do (out (:row r :col c) "#")))))
-        (make-instance 'frame
-                       :rfn (lambda (frame)
-                              (declare (ignore frame))
-                              (draw-square))
-                       :fsz (list r1 c1 r2 c2)))))
-#+END_SRC
-
-The event demo is a stub for now. Later it will print events passed to
-it, for now it prints outside the frame. We will use it to illustrate
-a need for scroll bars and for the offset abstraction when the content
-goes beyond the frame dimensions and to reveal an interesting bug in
-the ~out~ macro.
-
-#+BEGIN_SRC lisp
-  (defun make-report-frame (r1 c1 r2 c2)
-    (flet ((reporter (frame)
-             (declare (ignore frame))
-             (let ((str "I would like to report an event here!"))
-               (loop with rows = (+ (- r2 r1) 3)
-                     with col = (- c1 2)
-                     for row from (1- r1) upto (1+ r2)
-                     for id = (- row r1 -2)
-                     for string = (format nil "XXX ~d/~d: ~a" id rows str)
-                     do (out (:row row :col col :fgc '(#xff #x88 #x88)) string)))))
-      (make-instance 'frame
-                     :rfn #'reporter
-                     :fsz (list r1 c1 r2 c2))))
-#+END_SRC
-
-Finally we'd like to see them on the screen, so we'll bind a few
-controls.
-
-- ~C-n~ will create four rather small frames: two overlapping noise
-  frames, one animation frame and one event reporting frame
-- ~C-m~ will create one maximized noise frame
-- ~C-u~ will toggle activation of a random frame
-
-Add the following clauses to cond in ~handle-event~:
-
-#+BEGIN_SRC lisp
-  (defun handle-event (fm event)
-    #|...|#
-    (cond
-      #|...|#
-      ((keyp event #\N :c)
-       (reset)
-       (setf (frames fm)
-             (list (make-noise-frame 4  2 12 20)
-                   (make-noise-frame 6 12 14 30)
-                   (make-animation-frame 4 36 10 78 20)
-                   (make-report-frame 18 10 23 20))))
-      ((keyp event #\M :c)
-       (reset)
-       (setf (frames fm)
-             (list (make-noise-frame 2
-                                     1
-                                     (rows *console*)
-                                     (cols *console*)))))
-      ((keyp event #\U :c)
-       (if (active fm)
-           (setf (active fm) nil)
-           (alexandria:when-let ((frs (frames fm)))
-             (setf (active fm) (alexandria:random-elt frs)))))))
-#+END_SRC
-
-We also want to have window decorations. On a terminal the space is
-limited and each character is precious. That's why we'll draw
-decorations only on the right border of the frame. Desired behavior:
-
-- press "x" to close the frame
-- press "o" to maximize the frame ("v" to reverse)
-- press ">" to minimize the frame ("<" to reverse)
-- drag " " to move the frame
-- drag "/" to resize the frame
-- when the frame output exceeds its size, add scroll bars
-
-#+BEGIN_SRC lisp
-  (defun render-window (frame)
-    (destructuring-bind (wr1 wc1 wr2 wc2) (fsz frame)
-      (declare (ignore wc1))
-      (when (= wr2 (first *row2*))
-        (return-from render-window
-          (render-frame frame)))
-      (ctl (:bgc #x11 #x11 #x11)
-           (:fgc #xbb #xbb #xbb))
-      (let ((col (1+ wc2)))
-        (out (:row wr1 :col col :fgc '(#xff #x22 #x44)) "x")
-        (out (:row (+ wr1 1) :col col) "o")
-        (out (:row (+ wr1 2) :col col) ">")
-        (loop for row from (+ wr1 3) upto wr2
-              do (out (:row row :col col) " "))
-        (out (:row (- wr2 0) :col col) "/"))
-      (ctl (:bgc #x22 #x22 #x22)
-           (:fgc #xbb #xbb #xbb))
-      (render-frame frame)))
-
-  (defun display-screen (fm)
-    (alexandria:if-let ((frame (active fm)))
-      (render-window frame)
-      (dolist (frame (frames fm))
-        (render-window frame))))
-#+END_SRC
-
-Now press C-n to see a few frames and press C-m to see our baseline
-performance benchmark. Now we can move forward to test things.
-
-#+CAPTION: New examples in action.
-#+NAME:   fig:examples
-[[./static/02-examples.webm]]
-
-Looking at our examples we can easily spot a few problems:
-
-- the last two columns are not shown in the event demo
-- a small frame rate in the full screen noise demo (~40fps)
-- overlapping windows flicker and overexpose their output
-- flickering with the background in the animation demo
-
-The first issue is because we have a bug! When we render text in the
-event reporter demo, we start from a column which is two characters
-before the clipping area beginning. Looking at the macro ~out~ we have
-there the following loop:
-
-#+BEGIN_SRC lisp
-  (loop for c from col
-        for s across str
-        when (inside row c)
-          do (put s))
-#+END_SRC
-
-Increasing the cursor position is an implicit side-effect of calling
-put. So when the character does not fit inside the clipping region, we
-leave the cursor at its previous position. That's why in fact we start
-drawing before the clipping region. We need to advance the cursor
-manually. Since we are at it, we will add a few more escape sequences:
-
-#+BEGIN_SRC lisp
-  (macrolet ((moveit (endch)
-               `(if (= n 1)
-                    (csi ,endch)
-                    (csi n ,endch))))
-    (defun cursor-up    (&optional (n 1)) (moveit "A"))
-    (defun cursor-down  (&optional (n 1)) (moveit "B"))
-    (defun cursor-right (&optional (n 1)) (moveit "C"))
-    (defun cursor-left  (&optional (n 1)) (moveit "D")))
-
-  (defmacro out (#|...|#)
-    `(let (#|...|#)
-       #|...|#
-       (loop for c from col
-             for s across str
-             if (inside row c)
-               do (put s)
-             else
-               do (cursor-right))))
-#+END_SRC
-
-* Benchmarking output
-
-When we render the noise demo on the area 80x24 the frame rate is very
-unimpressive – around 40 fps. We can't write games like this!  We'll
-take a look at the function ~put~ which is responsible for the actual
-writing on the terminal. It has a call to ~finish-output~, but we
-don't need it to be called after each call. We'll put that at the end
-of the rendering loop instead. Don't forget to change
-~get-cursor-position~ to do that, otherwise we may get stuck during
-startup!
-
-#+BEGIN_SRC lisp
-  (defun put (&rest args)
-    "Put raw string on a console"
-    (format *console-io* "~{~a~}" args))
-
-  (defun start-display ()
-    #|...|#
-    (loop #|...|#
-          do (finish-output *console-io*)))
-
-  (defun get-cursor-position ()
-    (request-cursor-position)
-    (finish-output *console-io*) ; <-----
-    (handler-case (loop (read-input))
-      (cursor-position-report (c)
-        (values (row c) (col c)))))
-#+END_SRC
-
-Aha, Jackpot! Our rendering is now twice as fast as before with a
-staggering 100 frames per second. Let's go one step further and
-inhibit all writing to the terminal.
-
-#+BEGIN_SRC lisp
-  (defvar *inhibit* nil)
-  (defun put (&rest args)
-    "Put raw string on a console"
-    (unless *inhibit*
-      (format *console-io* "~{~a~}" args)))
-
-  (defun display-screen (fm)
-    (let ((*inhibit* t))
-      (alexandria:if-let ((frame (active fm)))
-        (render-window frame)
-        (dolist (frame (frames fm))
-          (render-window frame)))))
-#+END_SRC
-
-That gives us whooping 500-1000fps on 80x24 window (what is the upper
-limit of the measurement which is based on the internal time). Clearly
-our rendering is I/O bound at the moment. Notice though, that even now
-when we resize the terminal (and recreate the frame) to i.e 158x84
-we'll have a frame rate around 111fps, which is not that impressive.
-There is certainly merit in optimizing for the CPU time after we fix
-the bottleneck with I/O.
-
-We need to write to the console as little as possible. The rest of the
-time is spent on looping over cells and doing things like picking a
-random color. Ideally we'd write at most one character in each cell,
-but we also do other things, like setting the cursor position and
-colors. It is time for us to count characters per frame! We can't do
-better than 80x24 = 1920 with the noise demo.
-
-#+BEGIN_SRC lisp
-  (defvar *count* nil)
-  (defun put (&rest args)
-    "Put raw string on a console"
-    (let* ((payload (format nil "~{~a~}" args))
-           (length (length payload)))
-      (when *count*
-        (incf *count* length))
-      (princ payload *console-io*)
-      (finish-output *console-io*)))
-
-  (defun start-display ()
-    #| ... |#
-    (let (start stop delta count)
-      #|...|#
-      (let ((*count* 0))
-        (display-screen fm)
-        (setf count *count*))
-      #|...|#
-      (out (:col 1 :row rows)
-           (format nil "Rows ~3d, Cols ~3d, FPS ~8,2f, chars ~8d"
-                   (1- rows) cols (if (zerop delta)
-                                      :|We are that good!|
-                                      (/ 1.0 delta))
-                   count)))
-    #| ... |#)
-#+END_SRC
-
-Let's remind ourselves what is the current shape of the function
-~make-noise-frame~, we'll tinker with it to compare different
-approaches:
-
-#+BEGIN_SRC lisp
-  (defun make-noise-frame (r1 c1 r2 c2)
-    (flet ((make-noise-renderer (color)
-             (lambda (frame)
-               (destructuring-bind (r1 c1 r2 c2) (fsz frame)
-                 (loop for row from r1 upto r2
-                       do (loop for col from c1 upto c2
-                                do (out (:row row
-                                         :col col
-                                         :bgc (alexandria:random-elt
-                                               `((0 0 0) (8 8 8)))
-                                         :fgc color)
-                                        (alexandria:random-elt '("+" "-")))))))))
-      (make-instance 'frame
-                     :rfn (make-noise-renderer
-                           (list (alexandria:random-elt '(#x22 #x88 #xff))
-                                 (alexandria:random-elt '(#x22 #x88 #xff))
-                                 (alexandria:random-elt '(#x22 #x88 #xff))))
-                     :fsz (list r1 c1 r2 c2))))
-#+END_SRC
-
-This demo gives us 153267 characters per frame, which compared to 1920
-is over 81 times more. Something went terribly wrong! Our prime
-suspect is a macro ~out~. Let's put the ~out~ out of the picture.
-We'll set the state manually with ~ctl~ and won't bring back the old
-one. Also we won't bother we repositioning the cursor after each cell.
-
-#+BEGIN_SRC lisp
-  (defun make-noise-frame (r1 c1 r2 c2)
-    (flet ((make-noise-renderer (color)
-             (lambda (frame)
-               (ctl (:pos r1 . c1)) ; <- set the render beginning
-               (destructuring-bind (r1 c1 r2 c2) (fsz frame)
-                 (loop for row from r1 upto r2
-                       do (loop for col from c1 upto c2
-                                do (let ((fg color)
-                                         (bg (alexandria:random-elt `((0 0 0) (8 8 8)))))
-                                     (ctl (:fgc (first fg) (second fg) (third fg))
-                                          (:bgc (first bg) (second bg) (third bg))))
-                                   (put (alexandria:random-elt '("+" "-")))))))))
-      (make-instance 'frame
-                     :rfn (make-noise-renderer
-                           (list (alexandria:random-elt '(#x22 #x88 #xff))
-                                 (alexandria:random-elt '(#x22 #x88 #xff))
-                                 (alexandria:random-elt '(#x22 #x88 #xff))))
-                     :fsz (list r1 c1 r2 c2))))
-#+END_SRC
-
-That gives us 59526 characters per frame what is almost thrice as
-fast. Now let's try skipping setting the color whatsoever.
-
-#+BEGIN_SRC lisp
-  (defun make-noise-frame (r1 c1 r2 c2)
-    (flet ((make-noise-renderer (color)
-             (lambda (frame)
-               (ctl (:pos r1 . c1)) ; <- set the render beginning
-               (destructuring-bind (r1 c1 r2 c2) (fsz frame)
-                 (loop for row from r1 upto r2
-                       do (loop for col from c1 upto c2
-                                do (put (alexandria:random-elt '("+" "-")))))))))
-      (make-instance 'frame
-                     :rfn (make-noise-renderer
-                           (list (alexandria:random-elt '(#x22 #x88 #xff))
-                                 (alexandria:random-elt '(#x22 #x88 #xff))
-                                 (alexandria:random-elt '(#x22 #x88 #xff))))
-                     :fsz (list r1 c1 r2 c2))))
-#+END_SRC
-
-Aha, 1926 characters! Setting the cursor position accounts for the
-remaining 6 characters ~ESC [ 2 ; 1 H~. So truly the macro ~out~ is
-our culprit.
-
-Here is a short comparison of these approaches. ~out~ brings back the
-old state, ~ctl+put~ sets the color for each cell but doesn't restore
-the old state, and ~put~ sets the position only once and writes to
-consecutive cells (no color). Numbers are ~fps / chars-per-frame~. The
-throughput of my terminal is roughly 10M characters per second.
-
-| col;row | out           | ctl+put      | put          |
-|---------+---------------+--------------+--------------|
-|   80x24 | 100 / 154664  | 250 / 61446  | 500+ / 1926  |
-|   80x80 | 19  / 517040  | 77  / 211206 | 500+ / 6406  |
-|  159x86 | 8   / 1097034 | 14  / 423900 | 333  / 13680 |
-|  319x86 | 5   / 2210304 | 10  / 877894 | 166  / 27440 |
-
-These numbers may differ in case of examples with colors, because they
-are selected randomly, and printing ~255;255;255~ consumes obviously
-more characters than i.e ~42;42;42~. Also note, that this is the worst
-case scenario where we change colors for each cell of both background
-and foreground. Usually numbers should be much more favorable to us.
-
-#+CAPTION: Noise demo variants
-#+NAME:   fig:noise
-[[./static/02-noise-demo.webm]]
-
-As we can see, a major bottlenecks are:
-- bringing back the old state of a medium
-- repositioning the cursor for output
-- changing foreground and background color
-
-Sometimes changing color is not necessary, because it does not change
-from cell to cell. For instance in the noise demo the foreground color
-doesn't change and only the background color is picked randomly.
-
-* Virtual console
-
-We've already introduced the class ~console~ which is a layer of
-indirection for a terminal access. We will extend this concept into
-something resembling a display server. Time to introduce a few terms:
-
-- terminal :: an actual terminal area
-- vconsole :: a virtual screen area
-- surface  :: a rectangular area on a vconsole
-- vbuffer  :: an object which may be mapped onto a surface
-
-The visible output of our display server is the intersection between a
-~terminal~ and a ~vconsole~ areas. Separation of the ~vbuffer~ and the
-~surface~ is necessary if we consider the output which does not fit in
-its window (and requires scroll bars).
-
-~vconsole~ and ~vbuffer~ have the same prefix because they are very
-similar – both serve as the intermediary between the operation and the
-drawing. That's why they will implement a common protocol made of a
-single function ~flush-buffer~ which name is self-explanatory. It
-specializes on the first argument and is expected to flush its output
-onto a rectangle specified by other arguments.
-
-#+BEGIN_SRC lisp
-  (defgeneric flush-buffer (buffer r1 c1 r2 c2))
-#+END_SRC
-
-We'll start with renaming the class ~console~ and removing ~:after~
-methods which immediately send the escape sequence when particular
-slots are set.
-
-#+BEGIN_SRC lisp
-  ;; rename the class
-
-  (defclass vconsole () #| ... |#)
-
-  (defmethod initialize-instance :after
-      ((instance vconsole) &key fgc bgc pos cvp ptr)
-    #| ... |#)
-
-  (defmacro with-console (#|...|#)
-    #| ... |# (make-instance 'vconsole ,@args))
-
-  ;; remove methods
-
-  ;; (defmethod (setf fgc) :after (rgb (instance console))
-  ;;   (apply #'set-foreground-color rgb))
-
-  ;; (defmethod (setf bgc) :after (rgb (instance console))
-  ;;   (apply #'set-background-color rgb))
-
-  ;; (defmethod (setf pos) :before (pos (instance console))
-  ;;   (check-type (car pos) (integer 1))
-  ;;   (check-type (cdr pos) (integer 1)))
-
-  ;; (defmethod (setf pos) :after (pos (instance console))
-  ;;   (set-cursor-position (car pos) (cdr pos)))
-
-  ;; (defmethod (setf ptr) :after (ptr (instance console))
-  ;;   (set-mouse-tracking (not (null ptr))))
-
-  ;; (defmethod (setf cvp) :after (cvp (instance console))
-  ;;   (set-cursor-visibility (not (null cvp))))
-#+END_SRC
-
-
-Now replace a cumbersome slot ~pos~ with separate slots ~row~ and
-~col~. That requires also modifications to the macro ~out~ and
-~ctl~. Since we are at it remove also the slot ~app~.
-
-#+BEGIN_SRC lisp
-  (defclass vconsole ()
-    (;; (pos ...)
-     ;; (app ...)
-     (row :initarg :row :accessor row)
-     (col :initarg :col :accessor col)
-     #| ... |#)
-    (:default-initargs ;; :pos '(1 . 1)
-                       ;; :app nil
-                       :row 1
-                       :col 1
-                       #| ... |#))
-
-  (defmacro out ((&key row col fgc bgc) object)
-    "Put an object on a console"
-    `(let ((str (princ-to-string ,object)))
-       (assert (null (find #\newline str)))
-       (letf (((row *console*) (or ,row (row *console*))
-               (col *console*) (or ,col (col *console*)))
-              ,@(when fgc `(((fgc *console*) ,fgc)))
-              ,@(when bgc `(((bgc *console*) ,bgc))))
-         (let ((row (row *console*))
-               (col (col *console*)))
-           (loop for c from col
-                 for s across str
-                 if (inside row c)
-                   do (put s)
-                 else
-                   do (cursor-right))))))
-
-  (defmacro ctl (&rest operations)
-    `(progn
-       ,@(loop for op in operations
-               collect (destructuring-bind (name &rest args) op
-                         (ecase name
-                           (:clr `(clear-rectangle ,@args))
-                           (:fgc `(setf (fgc *console*) (list ,@args)))
-                           (:bgc `(setf (bgc *console*) (list ,@args)))
-                           (:cvp `(setf (cvp *console*) ,@args))
-                           (:ptr `(setf (ptr *console*) ,@args))
-                           (:row `(setf (row *console*) ,@args))
-                           (:col `(setf (col *console*) ,@args)))))))
-#+END_SRC
-
-Of course now that we do not set the cursor position on the terminal
-anymore (because we've removed ~after~ methods) and output is all
-jumbled up. We will add an array to ~vconsole~ which will hold the
-output and implement the ~flash-buffer~ method for ~vconsole~. Array
-dimensions will be always adjusted when a ~update-console-dimensions~
-is called to match the terminal size. Keep in mind, that arrays are
-indexed starting from [0,0] and the terminal from [1,1].
-
-#+BEGIN_SRC lisp
-  (defclass vconsole ()
-    ((data :accessor data :documentation "Screen data buffer.")
-     #|...|#)
-    #|...|#)
-
-  (defmethod initialize-instance :after
-      ((instance vconsole) &key #|...|#)
-    #|...|#
-    (setf (data instance) (make-array (list 0 0) :adjustable t)
-    (let ((*console* instance))
-      (update-console-dimensions))))
-
-  (defun update-console-dimensions ()
-    (with-cursor-position ((expt 2 16) (expt 2 16))
-      (multiple-value-bind (rows cols) (get-cursor-position)
-        (setf (rows *console*) rows)
-        (setf (cols *console*) cols)
-        (adjust-array (data *console*) (list rows cols)
-                      :initial-element (list #\space
-                                             (fgc *console*)
-                                             (bgc *console*)))
-        (setf *row2* (list rows))
-        (setf *col2* (list cols)))))
-
-  (defmethod flush-buffer ((buffer vconsole) r1 c1 r2 c2)
-    (loop with data = (data *console*)
-          with max-row-index = (1- (min r2 (array-dimension data 0)))
-          with max-col-index = (1- (min c2 (array-dimension data 1)))
-          for row-index from (1- r1) upto max-row-index
-          do (loop for col-index from (1- c1) upto max-col-index
-                   do (let ((cell (aref data row-index col-index)))
-                        (destructuring-bind (character
-                                             (fg.r fg.g fg.b)
-                                             (bg.r bg.g bg.b))
-                            cell
-                          (set-cursor-position (1+ row-index) (1+ col-index))
-                          (set-foreground-color fg.r fg.g fg.b)
-                          (set-background-color bg.r bg.g bg.b)
-                          (put character))))
-          finally (finish-output *console-io*)))
-#+END_SRC
-
-Note that we are not paying much attention to minimizing number of
-writes yet. We always dump whole array onto the terminal regardless of
-whether the region has been damaged or not. We still need to fix
-~out~, ~ctl~ and ~clear-rectangle~ operators to write to the array.
-Code may be slightly simplified, because we don't need to bind console
-slots in ~out~ (so we may get rid of the macro ~letf~). Macro ~ctl~
-gains a new option ~fls~ which is responsible for adjusting the array
-and flushing the buffer.
-
-#+BEGIN_SRC lisp
-  ;;; Remove LETF macro
-  (defmacro out ((&key row col fgc bgc) object)
-    "Put an object on a console"
-    `(let ((str (princ-to-string ,object)))
-       (assert (null (find #\newline str)))
-       (let ((row (or ,row (row *console*)))
-             (col (or ,col (col *console*)))
-             (fgc (or ,fgc (fgc *console*)))
-             (bgc (or ,bgc (bgc *console*)))
-             (data (data *console*)))
-         (loop for c from col
-               for s across str
-               when (inside row c)
-                 do (setf (aref data (1- row) (1- c))
-                          (list s fgc bgc))))))
-
-  (defmacro ctl (&rest operations)
-    `(progn
-       ,@(loop for op in operations
-               collect (destructuring-bind (name &rest args) op
-                         (ecase name
-                           (:clr `(clear-rectangle ,@args))
-                           (:fgc `(setf (fgc *console*) (list ,@args)))
-                           (:bgc `(setf (bgc *console*) (list ,@args)))
-                           (:cvp `(setf (cvp *console*) ,@args))
-                           (:ptr `(setf (ptr *console*) ,@args))
-                           (:row `(setf (row *console*) ,@args))
-                           (:col `(setf (col *console*) ,@args))
-                           (:fls `(progn
-                                    (update-console-dimensions)
-                                    (flush-buffer *console*
-                                                  1
-                                                  1
-                                                  (rows *console*)
-                                                  (cols *console*)))))))))
-
-  (defun clear-rectangle (r1 c1 r2 c2)
-    (loop with buf = (data *console*)
-          with fgc = (fgc *console*)
-          with bgc = (bgc *console*)
-          with max-row-index = (1- (min r2 (array-dimension buf 0)))
-          with max-col-index = (1- (min c2 (array-dimension buf 1)))
-          for row-index from (1- r1) upto max-row-index
-          do (loop for col-index from (1- c1) upto max-col-index
-                   do (setf (aref buf row-index col-index)
-                            (list #\space fgc bgc)))))
-#+END_SRC
-
-Finally we need to update examples. Instead of ~finish-output~ in the
-last form of the ~loop~ in ~start-display~ we need to flush the buffer
-with the ~ctl~ operator and we need clear the array in ~handle-event~
-(instead of clearing the terminal, because array contents will be
-redrawn on it anyway in the next iteration).
-
-#+BEGIN_SRC lisp
-(defun handle-event (fm event)
-  (flet ((reset ()
-           #|...|#
-           (clear-rectangle 1 1 (rows *console*) (cols *console*))))
-    #|...|#))
-
-(defun start-display ()
-  #|...|#
-  (loop #|...|#
-    ;;; do (finish-output *console-io*)
-    do (ctl (:fls)))
-#+END_SRC
-
-After this step examples should work, although our measurement methods
-are giving us wrong results. FPS and character count is measured for
-the function ~display-screen~ while part of the time is spent on
-flushing the buffer, and all characters are written there. We will
-gather information for a whole iteration and print it in the next
-header (so printed data describes a previous frame including the top
-bar with the information):
-
-#+BEGIN_SRC lisp
-;; terminal.lisp
-(defvar *inhibit* nil)
-(defvar *count* nil)
-
-(defun put (&rest args)
-  "Put raw string on a console"
-  (unless *inhibit*
-    (let* ((payload (format nil "~{~a~}" args))
-           (length (length payload)))
-      (when *count*
-        (incf *count* length))
-      (princ payload *console-io*))))
-
-;; examples.lisp
-(defun start-display ()
-  (swank:create-server)
-  (with-console (:ios *terminal-io*)
-    (clear-console)
-    (loop with fm = (make-instance 'frame-manager)
-          with count = 0
-          with fps = :|We are that good!|
-          for rows = (rows *console*)
-          for cols = (cols *console*)
-          for start = (get-internal-real-time)
-          for *count* = 0
-          do (loop for ch = (read-input)
-                   until (null ch)
-                   do (handle-event fm ch))
-          do (display-screen fm)
-             (ctl (:fgc #x22 #x22 #x22)
-                  (:bgc #xbb #xbb #xbb))
-             (let* ((status (format nil "Rows ~3d, Cols ~3d, FPS ~8,2f, chars ~8d"
-                                    (1- rows) cols fps count))
-                    (len (length status)))
-               (ctl (:clr 1 (min (1+ len) cols) 1 cols))
-               (out (:col 1 :row 1) status))
-             (ctl (:fgc #xff #xa0 #xa0)
-                  (:bgc #x22 #x22 #x22))
-          do (ctl (:fls))
-             (setf count *count*)
-             (let* ((stop (get-internal-real-time))
-                    (delta (/ (- stop start) internal-time-units-per-second)))
-               (if (zerop delta)
-                   (setf fps :|We are that good!|)
-                   (setf fps (/ 1.0 delta)))))))
-#+END_SRC
-
-Now when we run examples we notice a few important things:
-
-1. Frame rate is constant disregarding of how much we draw
-
-It is roughly similar to the ~put+ctl~ version from our previous
-benchmark. The fact that we are slow is because we always write whole
-array and we always do set the position and color for the printed
-character.
-
-2. There is no flicker between separate drawings
-
-Both overlapping windows and animated square do not flicker anymore,
-because all updates are done in the memory, only the final result is
-rendered. So we've that problem solved.
-
-3. Console size is updated interactively when we resize the terminal
-
-We've started invoked ~update-console-dimensions~ in order to adjust
-the array in the ~(ctl (:fls))~. This is a very nice side effect.
-
-#+CAPTION: Virtual console in action
-#+NAME:   fig:vconsole
-[[./static/02-vconsole.webm]]
-
-* Optimizing flush-buffer
-
-Our improvements caused that our rendering is smooth. On the other
-hand, we always exhibit the worst case scenario regardless of a
-damaged area and flush whole array. On top of that each written
-character conses a new list. If that's not enough we need to also
-note, that we set the cursor position and color even when we don't
-have to. This section will try to address these performance issues.
-
-First we'll try to not modify the cursor position and colors in the
-function ~flush-buffer~ when it is not necessary. Since the method
-specialized on the ~vconsole~ is always called after updating the
-console dimensions, we know that text will wrap when it advances from
-the last column, so we may set it only once. Regarding colors it is a
-matter of tracking whether the cursor color changes.
-
-#+BEGIN_SRC lisp
-  (defmethod flush-buffer ((buffer vconsole) r1 c1 r2 c2)
-    (set-cursor-position r1 c1)
-    (loop with data = (data *console*)
-          with max-row-index = (1- (min r2 (array-dimension data 0)))
-          with max-col-index = (1- (min c2 (array-dimension data 1)))
-          for row-index from (1- r1) upto max-row-index
-          do (loop with last-fg = nil
-                   with last-bg = nil
-                   for col-index from (1- c1) upto max-col-index
-                   do (let ((cell (aref data row-index col-index)))
-                        (destructuring-bind (character
-                                             (fg.r fg.g fg.b)
-                                             (bg.r bg.g bg.b))
-                            cell
-                          (unless (equal last-fg (second cell))
-                            (set-foreground-color fg.r fg.g fg.b)
-                            (setf last-fg (second cell)))
-                          (unless (equal last-bg (third cell))
-                            (set-background-color bg.r bg.g bg.b)
-                            (setf last-bg (third cell)))
-                          (put character))))
-          finally (finish-output *console-io*)))
-#+END_SRC
-
-These changes give us a wonderful improvement. For a terminal of size
-80x24 a full screen noise demo number of characters written drops from
-80000 down to 15000, and for smaller windows from 85000 down to 7000!
-FPS also increases significantly.
-
-#+CAPTION: Optimize flush buffer
-#+NAME:   fig:opt-flush
-[[./static/02-optimize-flush-buffer.webm]]
-
-* Optimizing the memory use
-
-We will now take a pity on the CPU and the memory. We excessively call
-~adjust-array~ and cons a new list for each written character. We'll
-have the array contents initialized with instances of ~vcell~. Access
-to data buffer will be abstracted away with functions ~get-cell~ and
-~set-cell~, so we don't need to care about mismatch between array and
-terminal first index elsewhere.
-
-#+BEGIN_SRC lisp
-  (defclass vcell ()
-    ((ch :initarg :ch :accessor ch)
-     (fg :initarg :fg :accessor fg)
-     (bg :initarg :bg :accessor bg))
-    (:default-initargs :ch #\space
-                       :fg (fgc *console*)
-                       :bg (bgc *console*)))
-
-  (defun get-cell (data row col
-                   &aux (i0 (1- row)) (i1 (1- col)))
-    (or (aref data i0 i1)
-        (setf (aref data i0 i1) (make-instance 'vcell))))
-
-  (defun set-cell (cell ch fg bg)
-    (setf (ch cell) ch
-          (fg cell) fg
-          (bg cell) bg))
-#+END_SRC
-
-When the array is too small to hold the screen we'll resize it, when
-the screen is smaller than the array we'll leave it be.
-
-#+BEGIN_SRC lisp
-  (defun update-console-dimensions ()
-    (with-cursor-position ((expt 2 16) (expt 2 16))
-      (multiple-value-bind (rows cols)
-          (get-cursor-position)
-        (setf (rows *console*) rows)
-        (setf (cols *console*) cols)
-        (destructuring-bind (ar ac) (array-dimensions (data *console*))
-          (when (or (> rows ar) (> cols ac))
-            (adjust-array (data *console*)
-                          (list rows cols)
-                          :initial-element nil)))
-        (setf *row2* (list rows))
-        (setf *col2* (list cols)))))
-#+END_SRC
-
-Finally we'll use new operators in operators ~out~, ~clear-rectangle~
-and ~flush-buffer~:
-
-#+BEGIN_SRC lisp
-  (defmacro out ((&key row col fgc bgc) object)
-    "Put an object on a console"
-    `(let ((str (princ-to-string ,object)))
-       (assert (null (find #\newline str)))
-       (let ((row (or ,row (row *console*)))
-             (col (or ,col (col *console*)))
-             (fgc (or ,fgc (fgc *console*)))
-             (bgc (or ,bgc (bgc *console*)))
-             (data (data *console*)))
-         (loop for col from col
-               for ch across str
-               when (inside row col)
-                 do (set-cell (get-cell data row col) ch fgc bgc)))))
-
-  (defun clear-rectangle (r1 c1 r2 c2)
-    (loop with buf = (data *console*)
-          with fgc = (fgc *console*)
-          with bgc = (bgc *console*)
-          with max-row = (min r2 (array-dimension buf 0))
-          with max-col = (min c2 (array-dimension buf 1))
-          for row from r1 upto max-row
-          do (loop for col from c1 upto max-col
-                   do (set-cell (get-cell buf row col) #\space fgc bgc))))
-
-  (defmethod flush-buffer ((buffer vconsole) r1 c1 r2 c2)
-    (set-cursor-position r1 c1)
-    (loop with data = (data *console*)
-          with max-row = (min r2 (rows buffer))
-          with max-col = (min c2 (cols buffer))
-          for row from r1 upto max-row
-          do (loop with last-fg = nil
-                   with last-bg = nil
-                   for col from c1 upto max-col
-                   for cell = (get-cell data row col)
-                   do (let ((ch (ch cell))
-                            (fg (fg cell))
-                            (bg (bg cell)))
-                        (destructuring-bind ((fg.r fg.g fg.b)
-                                             (bg.r bg.g bg.b))
-                            (list fg bg)
-                          (unless (equal last-fg fg)
-                            (set-foreground-color fg.r fg.g fg.b)
-                            (setf last-fg fg))
-                          (unless (equal last-bg bg)
-                            (set-background-color bg.r bg.g bg.b)
-                            (setf last-bg bg))
-                          (put ch))))
-          finally (finish-output *console-io*)))
-#+END_SRC
-
-We still cons back and forth foreground and background colors. From
-now on they will be numbers and not lists. That will also make the
-code more readable.
-
-Low level interface:
-
-#+BEGIN_SRC lisp
-  (defun set-foreground-color (color)
-    (let ((r (ldb '(8 . 16) color))
-          (g (ldb '(8 .  8) color))
-          (b (ldb '(8 .  0) color)))
-      (sgr "38;2;" r ";" g ";" b)))
-
-  (defun set-background-color (color)
-    (let ((r (ldb '(8 . 16) color))
-          (g (ldb '(8 .  8) color))
-          (b (ldb '(8 .  0) color)))
-      (sgr "48;2;" r ";" g ";" b)))
-#+END_SRC
-
-High level interface:
-
-#+BEGIN_SRC lisp
-  (defmacro ctl (&rest operations)
-    #|...|#
-    (:fgc `(setf (fgc *console*) ,@args))
-    (:bgc `(setf (bgc *console*) ,@args)))
-
-  (defclass vconsole ()
-    #|...|#
-    (:default-initargs :fgc #xffa0a0 :bgc #x222222))
-
-  (defmethod flush-buffer ((buffer vconsole) r1 c1 r2 c2)
-    #| ... |#
-    do (let ((ch (ch cell))
-             (fg (fg cell))
-             (bg (bg cell)))
-         (unless (eql last-fg fg)
-           (set-foreground-color fg)
-           (setf last-fg fg))
-         (unless (eql last-bg bg)
-           (set-background-color bg)
-           (setf last-bg bg))
-         (put ch))
-    #| ... |#
-#+END_SRC
-
-In examples fix each use of ~ctl~ and ~out~ where options ~:fgc~ or
-~:bgc~ appear. Also change the ~make-noise-frame~ function:
-
-#+BEGIN_SRC lisp
-  (defun make-noise-frame (r1 c1 r2 c2)
-    (flet ((make-noise-renderer (color)
-             (lambda (frame)
-               (destructuring-bind (r1 c1 r2 c2) (fsz frame)
-                 (loop for row from r1 upto r2
-                       do (loop for col from c1 upto c2
-                                do (out (:row row
-                                         :col col
-                                         :bgc (alexandria:random-elt
-                                               `(#x000000 #x080808))
-                                         :fgc color)
-                                        (alexandria:random-elt '("+" "-"))))))))
-           (random-color ()
-             (random (1+ #xffffff))))
-      (make-instance 'frame
-                     :rfn (make-noise-renderer (random-color))
-                     :fsz (list r1 c1 r2 c2))))
-#+END_SRC
-
-* Optimizing number of writes
-
-In many applications it is the case that only small portion of the
-screen changes between frames. Redrawing each character on the console
-in ~flash-buffer~ is necessary for the full screen noise demo, but
-that isn't a typical case. Since we are I/O bound we'll try to reduce
-number of writes to the terminal by tracing "dirty" cells and
-redrawing only when necessary. We can do that thanks to the function
-~set-cell~.
-
-#+BEGIN_SRC lisp
-  (defclass vcell ()
-    ((ch :initarg :ch :accessor ch)
-     (fg :initarg :fg :accessor fg)
-     (bg :initarg :bg :accessor bg)
-     (dirty-p :initarg :dirty-p :accessor dirty-p))
-    (:default-initargs :ch #\space
-                       :fg (fgc *console*)
-                       :bg (bgc *console*)
-                       :dirty-p t))
-
-  (defun set-cell (cell ch fg bg)
-    (unless (and (char= (ch cell) ch)
-                 (= (fg cell) fg)
-                 (= (bg cell) bg))
-      (setf (ch cell) ch
-            (fg cell) fg
-            (bg cell) bg
-            (dirty-p cell) t)))
-#+END_SRC
-
-
-Writing the cell will be also abstracted with a function ~put-cell~
-which will mark the cell as "clean". Current color will be stored in
-the variable ~*console*~ which may be accessed dynamically. When
-~flush-buffer~ exits, the old colors are restored. When the cell is
-not "dirty" the flush loop will skip. When next "dirty" character
-appears we need to reposition the cursor.
-
-#+BEGIN_SRC lisp
-  (defun put-cell (cell)
-    (let ((ch (ch cell))
-          (bg (bg cell))
-          (fg (fg cell)))
-      (unless (eql (fgc *console*) fg)
-        (set-foreground-color fg)
-        (setf (fgc *console*) fg))
-      (unless (eql (bgc *console*) bg)
-        (set-background-color bg)
-        (setf (bgc *console*) bg))
-      (put ch)
-      (setf (dirty-p cell) nil)))
-
-  (defmethod flush-buffer ((buffer vconsole) r1 c1 r2 c2)
-    (loop with data = (data *console*)
-          with skipped = t
-          with max-row = (min r2 (rows buffer))
-          with max-col = (min c2 (cols buffer))
-          with fgc = (fgc *console*)
-          with bgc = (bgc *console*)
-          for row from r1 upto max-row
-          do (loop for col from c1 upto max-col
-                   for cell = (get-cell data row col)
-                   if (dirty-p cell)
-                     do (when skipped
-                          (set-cursor-position row col)
-                          (setf skipped nil))
-                        (put-cell cell)
-                   else
-                     do (setf skipped t))
-          finally (finish-output *console-io*)
-                  (unless (eql (fgc *console*) fgc)
-                    (set-foreground-color fgc)
-                    (setf (fgc *console*) fgc))
-                  (unless (eql (bgc *console*) bgc)
-                    (set-background-color bgc)
-                    (setf (bgc *console*) bgc))))
-#+END_SRC
-
-Thanks to this change number of characters written in a demo with
-multiple windows drops from 8000 to 2000-3000. Improvement for a full
-screen noise demo is negligible.
-
-#+CAPTION: Optimize write
-#+NAME:   fig:opt-write
-[[./static/02-optimize-write.webm]]
-
-Now our console is more fragile when it comes to resizes and writes
-from somewhere else. Since we do not redraw cells unknown artifacts
-are not refreshed. Resize may be mitigated in when updating the
-console dimensions by forcing a full refresh. We will also change
-slightly the interface of ~flush-buffer~. ~update-console-dimensions~
-returns now ~t~ when dimensions change (~nil~ otherwise).
-
-#+BEGIN_SRC lisp
-  (defgeneric flush-buffer (buffer &key r1 c1 r2 c2 force))
-
-  (defmacro ctl (&rest operations)
-    #| ... |#
-    (:ffb `(flush-buffer *console* :force t)
-    (:fls `(let ((changed (update-console-dimensions)))
-             (flush-buffer *console* :force changed)))
-    #| ... |#)
-
-  (defun update-console-dimensions ()
-    (with-cursor-position ((expt 2 16) (expt 2 16))
-      (multiple-value-bind (rows cols)
-          (get-cursor-position)
-        (when (and (= (rows *console*) rows)
-                   (= (cols *console*) cols))
-          (return-from update-console-dimensions nil))
-        #|...|#
-    t)
-
-  (defmethod initialize-instance :after
-      ((instance vconsole) &key fgc bgc pos cvp ptr)
-    #|...|#
-    (setf (rows instance) 0)
-    (setf (cols instance) 0)
-    (let ((*console* instance))
-      (update-console-dimensions)))
-
-  (defmethod flush-buffer ((buffer vconsole)
-                           &key
-                             (r1 1)
-                             (c1 1)
-                             (r2 (rows buffer))
-                             (c2 (cols buffer))
-                             (force nil))
-    (loop #|...|#
-      if (or force (dirty-p cell))
-        do #| ... |#
-      else
-        do #| ... |#))
-#+END_SRC
-
-Rogue writes to the stream are the programmer's fault, so we'll only
-add a key binding to trigger a full refresh manually.
-
-#+BEGIN_SRC lisp
-(defun handle-event (fm event)
-  #| ... |#
-  ((keyp event :f5)
-   (ctl (:ffb))))
-#+END_SRC
-
-* Virtual buffers
-
-To prepare for upcoming changes we'll do a refactor. ~vconsole~ will
-be broken into ~vbuffer~ superclass responsible for the output and
-~vconsole~ representing the terminal. Current output sink will be
-designated by a special variable ~*buffer*~.
-
-Cell manipulation is abstracted with a small protocol specialized on
-the buffer. Internal representation of a cell is expected to be known
-by the ~flush-buffer~ implementer.
-
-- (get-cell buffer row col) :: returns a specified cell
-- (put-cell buffer row col) :: flushes a specified cell
-- (set-cell buffer row col) :: changes a specified cell
-
-~with-clipping~ will be remodeled to accept the buffer as the first
-argument. Instead of operating on dynamic bindings we'll encapsulate
-the clipping object in an instance of a class ~vclip~. This is pretty
-inflexible now, but reworking ~with-clipping~ to have underlying
-~invoke-with-clipping~ generic function called with a continuation
-instead would be trivial. We just don't need that for now. We'll put
-the virtual buffer implementation in a file ~vbuffers.lisp~.
-
-#+BEGIN_SRC lisp
-  (defgeneric get-cell (buffer row col))
-  (defgeneric put-cell (buffer row col))
-  (defgeneric set-cell (buffer row col ch fg bg))
-  (defgeneric inside-p (buffer row col))
-  (defgeneric flush-buffer (buffer &key r1 c1 r2 c2 force))
-
-  (defclass vbuffer ()
-    ((fgc  :initarg :fgc  :accessor fgc  :documentation "Foregorund color")
-     (bgc  :initarg :bgc  :accessor bgc  :documentation "Background color")
-     (row  :initarg :row  :accessor row  :documentation "Current row")
-     (col  :initarg :col  :accessor col  :documentation "Current col")
-     (clip :initarg :clip :accessor clip :documentation "Clipping object")
-     (data :initarg :data :accessor data :documentation "Data buffer")
-     (rows :initarg :rows :accessor rows :documentation "Buffer number of rows")
-     (cols :initarg :cols :accessor cols :documentation "Buffer number of cols"))
-    (:default-initargs :fgc #xffa0a0
-                       :bgc #x222222
-                       :row 1
-                       :col 1
-                       :clip (make-instance 'vclip)))
-
-  (defclass vcell ()
-    ((ch :initarg :ch :accessor ch)
-     (fg :initarg :fg :accessor fg)
-     (bg :initarg :bg :accessor bg)
-     (dirty-p :initarg :dirty-p :accessor dirty-p))
-    (:default-initargs :ch #\space
-                       :fg (fgc *buffer*)
-                       :bg (bgc *buffer*)
-                       :dirty-p t))
-
-  (defmethod get-cell ((buf vbuffer) row col)
-    (let ((data (data buf))
-          (i0 (1- row))
-          (i1 (1- col)))
-      (or (aref data i0 i1)
-          (setf (aref data i0 i1) (make-instance 'vcell)))))
-
-  (defmethod put-cell ((buf vbuffer) row col)
-    (let ((cell (get-cell buf row col)))
-      (setf (dirty-p cell) nil)))
-
-  (defmethod set-cell ((buf vbuffer) row col ch fg bg)
-    (let ((cell (get-cell buf row col)))
-      (unless (and (eql (ch cell) ch)
-                   (eql (fg cell) fg)
-                   (eql (bg cell) bg))
-        (setf (ch cell) ch
-              (fg cell) fg
-              (bg cell) bg
-              (dirty-p cell) t))))
-
-  (defclass vclip ()
-    ((r1 :initarg :r1 :accessor r1)
-     (c1 :initarg :c1 :accessor c1)
-     (r2 :initarg :r2 :accessor r2)
-     (c2 :initarg :c2 :accessor c2)
-     (fn :initarg :fn :accessor fn))
-    (:default-initargs :r1 1
-                       :c1 1
-                       :r2 24
-                       :c2 80
-                       :fn (constantly t)))
-
-  (defmethod inside-p ((buffer vbuffer) row col)
-    (let ((clip (clip buffer)))
-      (and (<= (r1 clip) row (r2 clip))
-           (<= (c1 clip) col (c2 clip))
-           (funcall (fn clip) row col))))
-
-  (defmacro with-clipping ((buffer &key r1 c1 r2 c2 fn) &body body)
-    (alexandria:with-gensyms (row1 col1 row2 col2 fun)
-      `(let ((clip (clip ,buffer)))
-         (let (,@(when r1 `((,row1 (r1 clip))))
-               ,@(when c1 `((,col1 (c1 clip))))
-               ,@(when r2 `((,row2 (r2 clip))))
-               ,@(when c2 `((,col2 (c2 clip))))
-               ,@(when fn `((,fun  (fn clip)))))
-           (unwind-protect
-                (progn ,@(when r1 `((setf (r1 clip) (max ,row1 ,r1))))
-                       ,@(when c1 `((setf (c1 clip) (max ,col1 ,c1))))
-                       ,@(when r2 `((setf (r2 clip) (min ,row2 ,r2))))
-                       ,@(when c2 `((setf (c2 clip) (min ,col2 ,c2))))
-                       ,@(when fn `((setf (fn clip)
-                                          (lambda (row col)
-                                            (and (funcall ,fun row col)
-                                                 (funcall ,fn row col))))))
-                       ,@body)
-             ,@(when r1 `((setf (r1 clip) ,row1)))
-             ,@(when c1 `((setf (c1 clip) ,col1)))
-             ,@(when r2 `((setf (r2 clip) ,row2)))
-             ,@(when c2 `((setf (c2 clip) ,col2)))
-             ,@(when fn `((setf (fn clip) ,fn))))))))
-#+END_SRC
-
-Operators ~out~ and ~ctl~ now operate on a dynamic variable
-~*buffer*~. Thanks to that the abstraction will remain the same
-regardless of the context. Also it will be possible to work on
-multiple buffers by rebinding the variable.
-
-#+BEGIN_SRC lisp
-  (defvar *buffer*)
-
-  (defmacro with-buffer ((object) &body body)
-    `(let ((*buffer* ,object))
-       ,@body))
-
-  (defun clear-rectangle (r1 c1 r2 c2)
-    (loop with buf = *buffer*
-          with fgc = (fgc buf)
-          with bgc = (bgc buf)
-          with max-row = (min r2 (rows buf))
-          with max-col = (min c2 (cols buf))
-          for row from r1 upto max-row
-          do (loop for col from c1 upto max-col
-                   do (set-cell buf row col #\space fgc bgc))))
-
-  (defmacro out ((&key row col fgc bgc) object)
-    `(let ((str (princ-to-string ,object)))
-       (assert (null (find #\newline str)))
-       (let* ((buf *buffer*)
-              (row (or ,row (row buf)))
-              (col (or ,col (col buf)))
-              (fgc (or ,fgc (fgc buf)))
-              (bgc (or ,bgc (bgc buf))))
-         (loop for col from col
-               for ch across str
-               when (inside-p buf row col)
-                 do (set-cell buf row col ch fgc bgc)))))
-
-  (defmacro ctl (&rest operations)
-    `(progn
-       ,@(loop for op in operations
-               collect (destructuring-bind (name &rest args) op
-                         (ecase name
-                           (:clr `(clear-rectangle ,@args))
-                           (:fgc `(setf (fgc *buffer*) ,@args))
-                           (:bgc `(setf (bgc *buffer*) ,@args))
-                           (:cvp `(setf (cvp *buffer*) ,@args))
-                           (:ptr `(setf (ptr *buffer*) ,@args))
-                           (:row `(setf (row *buffer*) ,@args))
-                           (:col `(setf (col *buffer*) ,@args))
-                           (:ffb `(flush-buffer *buffer* :force t))
-                           (:fls `(flush-buffer *buffer* :force nil)))))))
-#+END_SRC
-
-We've introduced two incompatibilities which affect examples: we've
-removed a variable ~*row2*~ and we've stopped calling
-~update-console-dimensions~ in the operation ~:fls~. Time to update
-~examples.lisp~:
-
-#+BEGIN_SRC lisp
-  (defun render-window (frame)
-    #|...|#
-    (when (= wr2 (r2 (clip *console*)))
-      (return-from render-window
-        (render-frame frame)))
-    #|...|#)
-
-  (defun start-display ()
-    (loop
-      #|...|#
-      do (loop for ch = (read-input)
-               until (null ch)
-               do (handle-event fm ch))
-      do (update-console-dimensions)
-      #|...|#))
-#+END_SRC
-
-Finally it is time to rewrite the ~vconsole~ implementation.
-
-#+BEGIN_SRC lisp
-  (defclass vconsole (vbuffer)
-    ((ios :initarg :ios :accessor ios :documentation "Console I/O stream.")
-     (cvp :initarg :cvp :accessor cvp :documentation "Cursor visibility.")
-     (ptr :initarg :ptr :accessor ptr :documentation "Pointer tracking.")
-     (fps :initarg :fps :accessor fps :documentation "Desired framerate.")
-     (hnd               :accessor hnd :documentation "Terminal handler."))
-    (:default-initargs :ios (error "I/O stream must be specified.")
-                       :cvp nil
-                       :ptr t
-                       :fps 10))
-
-  (defmethod initialize-instance :after
-      ((instance vconsole) &key fgc bgc row col cvp ptr)
-    (setf (hnd instance) (init-console))
-    (set-foreground-color fgc)
-    (set-background-color bgc)
-    (set-cursor-position row col)
-    (set-cursor-visibility cvp)
-    (set-mouse-tracking ptr)
-    (setf (data instance) (make-array (list 0 0) :adjustable t))
-    (setf (rows instance) 0)
-    (setf (cols instance) 0)
-    (let ((*console* instance))
-      (update-console-dimensions)))
-#+END_SRC
-
-We keep the variable ~*console*~ separate from a variable ~*buffer*~
-in case of a need to access the terminal (and not "the current"
-buffer). ~get-cursor-position~ is the cause of the input processing
-flakiness - it consumes events which it doesn't recognize - we'll
-tackle this problem in the next part of the tutorial. When the
-terminal dimensions change, we force a full repaint of the buffer to
-avoid corruption due to line wrap.
-
-#+BEGIN_SRC lisp
-  (defvar *console*)
-  (defmacro with-console ((&rest args
-                           &key ios fgc bgc cvp fps &allow-other-keys)
-                          &body body)
-    (declare (ignore fgc bgc cvp fps))
-    `(let* ((*console-io* ,ios)
-            (*console* (make-instance 'vconsole ,@args)))
-       (unwind-protect (with-buffer (*console*) ,@body)
-         (close-console (hnd *console*)))))
-
-  (defun get-cursor-position ()
-    (request-cursor-position)
-    (finish-output *console-io*)
-    (handler-case (loop (read-input))
-      (cursor-position-report (c)
-        (values (row c) (col c)))))
-
-  (defun update-console-dimensions ()
-    (with-cursor-position ((expt 2 16) (expt 2 16))
-      (multiple-value-bind (rows cols)
-          (get-cursor-position)
-        (let* ((console *console*)
-               (clip (clip console)))
-          (when (and (= (rows console) rows)
-                     (= (cols console) cols))
-            (return-from update-console-dimensions nil))
-          (setf (rows console) rows)
-          (setf (cols console) cols)
-          (destructuring-bind (ar ac) (array-dimensions (data console))
-            (when (or (/= rows ar) (/= cols ac))
-              (when (or (> rows ar) (> cols ac))
-                (adjust-array (data console)
-                              (list rows cols)
-                              :initial-element nil))
-              (with-buffer (console)
-                (ctl (:ffb)))))
-          (setf (r2 clip) rows)
-          (setf (c2 clip) cols))))
-    t)
-#+END_SRC
-
-And implement ~vbuffer~ methods. Both are specific to the console
-because they call functions from the lower level abstraction.
-
-#+BEGIN_SRC lisp
-(defmethod put-cell ((buf vconsole) row col)
-  (let* ((cell (get-cell buf row col))
-         (ch (ch cell))
-         (bg (bg cell))
-         (fg (fg cell)))
-    (unless (eql (fgc buf) fg)
-      (set-foreground-color fg)
-      (setf (fgc buf) fg))
-    (unless (eql (bgc buf) bg)
-      (set-background-color bg)
-      (setf (bgc buf) bg))
-    (put ch)
-    (setf (dirty-p cell) nil)))
-
-(defmethod flush-buffer ((buf vconsole)
-                         &key
-                           (r1 1)
-                           (c1 1)
-                           (r2 (rows buf))
-                           (c2 (cols buf))
-                           (force nil))
-  (loop with skipped = t
-        with max-row = (min r2 (rows buf))
-        with max-col = (min c2 (cols buf))
-        with fgc = (fgc *console*)
-        with bgc = (bgc *console*)
-        for row from r1 upto max-row
-        do (loop for col from c1 upto max-col
-                 if (or force (dirty-p (get-cell buf row col)))
-                   do (when skipped
-                        (set-cursor-position row col)
-                        (setf skipped nil))
-                      (put-cell buf row col)
-                 else
-                   do (setf skipped t))
-        finally (finish-output *console-io*)
-                (unless (eql (fgc buf) fgc)
-                  (set-foreground-color fgc)
-                  (setf (fgc buf) fgc))
-                (unless (eql (bgc buf) bgc)
-                  (set-background-color bgc)
-                  (setf (bgc buf) bgc))))
-#+END_SRC
-
-* Surfaces
-
-We've introduced the concept of a virtual buffer so now we may
-implement a surface. Surface is a window in a screen into the frame.
-
-# Initially I've thought about implementing it with conformally
-# displaced arrays, but I've decided that it would be too much hassle
-# without much gain (given that they are not first class citizen in
-# Common Lisp implementations). I've written [[https://turtleware.eu/posts/Conformal-array-displacement.html][a separate post]] about them.
-
-We'll add a new file to the project called "surfaces.lisp", it depends
-on ~packages~ and on ~vbuffers~. It is a dependency of ~examples~.
-
-#+BEGIN_SRC lisp
-  (defclass surface (vbuffer)
-    ((vbuf :initarg :vbuf :accessor vbuf :documentation "Underlying vbuffer")
-     (row0 :initarg :row0 :accessor row0 :documentation "Scroll row offset")
-     (col0 :initarg :col0 :accessor col0 :documentation "Scroll col offset")
-     (r1 :initarg :r1 :accessor r1 :documentation "Displacement row offset")
-     (c1 :initarg :c1 :accessor c1 :documentation "Displacement col offset")
-     (r2 :initarg :r2 :accessor r2 :documentation "Fill pointer row")
-     (c2 :initarg :c2 :accessor c2 :documentation "Fill pointer col"))
-    (:default-initargs :vbuf (error "VBuf is obligatory")
-                       :clip nil
-                       :row0 0
-                       :col0 0))
-
-  (defmethod initialize-instance :after
-      ((buf surface) &key r1 c1 r2 c2 rows cols)
-    (unless rows
-      (setf rows (1+ (- r2 r1)))
-      (setf (rows buf) rows))
-    (unless cols
-      (setf cols (1+ (- c2 c1)))
-      (setf (cols buf) cols))
-    (setf (clip buf) (make-instance 'vclip :r2 rows :c2 cols)
-          (data buf) (make-array (list rows cols)
-                                 :adjustable t
-                                 :initial-element nil)))
-#+END_SRC
-
-The idea is to have applications render to their own private buffer,
-which in turn is flushed to its parent. Implementing it will enable us
-to render a static window once and update only damaged parts when
-necessary. Moreover we want to be able to move and scroll frames.
-
-Given the above description surface is an intersection of the screen
-buffer and the frame buffer. The frame is displaced onto the console
-between coordinates [r1,c1; r2,c2] with additional offset [row0;col0]
-to allow scrolling. All we need to do now is to specialize functions
-~put-cell~ and ~flush-buffer~ to copy cells between buffers at fixed
-coordinates.
-
-#+BEGIN_SRC lisp
-  (defmethod put-cell ((buf surface) row col)
-    (let* ((vrow (1- (+ (r1 buf) (- (row0 buf)) row)))
-           (vcol (1- (+ (c1 buf) (- (col0 buf)) col)))
-           (cell (get-cell buf row col)))
-      (when (and (<= (r1 buf) vrow (r2 buf))
-                 (<= (c1 buf) vcol (c2 buf)))
-        (set-cell (vbuf buf) vrow vcol (ch cell) (fg cell) (bg cell)))
-      (setf (dirty-p cell) nil)))
-
-  (defmethod flush-buffer ((buffer surface) &key r1 c1 r2 c2 force)
-    (loop for row from 1 upto (rows buffer)
-          do (loop for col from 1 upto (cols buffer)
-                   do (put-cell buffer row col))))
-#+END_SRC
-
-To scroll a buffer we need to put some constraints. We don't want to
-scroll beyond the frame edges, because then the intersection between
-buffers would be an empty region. We need to account for two cases
-(for each axis):
-
-1. The surface is bigger than the frame buffer.
-
-   In this case we have some "empty" area between the buffer end and
-   the surface edge. Scrolling then is not necessary, because all
-   output is visible. That said we may want to scroll the content in
-   the surface area, so we are going to implement that. Alternative
-   solution would be for instance to fix its position at the top left
-   corner of a surface. Buffer should have its edges inside the
-   surface area.
-
-2. The surface is smaller than the frame buffer.
-
-   This case is quite straightforward - not all output is visible, so
-   we need to scroll to see it. Surprisingly the constraint for buffer
-   edges is almost symmetrical to the first case. The first edge of a
-   buffer is smaller or equal to the surface first edge, and the
-   second edge of a buffer is bigger or equal to the surface second
-   edge. That assures that we have no unnecessary empty space.
-
-This logic is implemented in the following two functions:
+#+CAPTION: Scrolling boundaries
+#+NAME:   fig:scroll-bound
+[[./static/02-scroll-bound.webm]]
+
+Functions ~move-to-row~ and ~move-to-col~ take the absolute argument
+and if scrolling the window violates the constraint, it returns
+~nil~. In that case we move a maximum quantity in the scroll direction
+we can (so when we for instance cursor-scroll 1000 to the left and the
+line has only 100 characters, we'll end at the line beginning).
 
 #+BEGIN_SRC lisp
   (defun move-to-row (buf row0)
@@ -3149,14 +1832,7 @@ This logic is implemented in the following two functions:
                 (and (<= vcol1 1)
                      (>= vcol2 width)))
         (setf (col0 buf) col0))))
-#+END_SRC
 
-Scrolling is usually made in some quantities. That's how we'll model
-the function ~scroll-buffer~. If the scroll quantity goes beyond the
-possible value, then it will be scrolled to the maximum at that
-direction.
-
-#+BEGIN_SRC lisp
   (defun scroll-buffer (buf row-dx col-dx)
     (flet ((quantity (screen-size buffer-size dx)
              (if (alexandria:xor (> screen-size buffer-size)
@@ -3175,198 +1851,114 @@ direction.
                     (quantity width (cols buf) col-dx)))))))
 #+END_SRC
 
-Like me, you may have problems with thinking about the scrolling
-direction. There are two strategies which make sense
+* Retained display mode
 
-- following the cursor
-- move the window
-
-If the former is interpretation is taken, then "scrolling down" moves
-the window up, because we want to have the cursor visible. That
-behavior is usually associated with arrow keys and scroll bars in
-applications. The latter interpretation seems to be more natural when
-you grab the content and move the pointer.
-
-* Reworking examples
-
-A frame will now be a subclass of a surface. Thanks to that we will be
-able to "draw" starting from the row and col being [1;1] and it will
-be up to the ~put-cell~ to translate the position. Each frame has its
-own buffer now which needs to be flushed after completion.
+Let's introduce a few more examples to have a few specimen we could
+talk about. The animation demo shows a square which bounces from the
+left to the right edge, and the report demo shows lines of text.
 
 #+BEGIN_SRC lisp
-  (defclass frame (surface)
-    ((rfn :initarg :rfn :accessor rfn :documentation "Rendering function."))
-    (:default-initargs :vbuf *console*))
+  (defclass animation-frame (frame)
+    ((sqr-speed :initarg :sqr-speed :reader sqr-speed)
+     (direction :initarg :direction :accessor direction)
+     (last-time :initarg :last-time :accessor last-time)
+     (current-row :accessor current-row)
+     (current-col :accessor current-col)
+     (minimum-col :accessor minimum-col)
+     (maximum-col :accessor maximum-col))
+    (:default-initargs :sqr-speed 5
+                       :direction 1
+                       :last-time (get-internal-real-time)))
 
-  (defun fsz (frame)
-    (values (r1 frame) (c1 frame) (r2 frame) (c2 frame)))
+  (defmethod initialize-instance :after
+      ((frame animation-frame) &key r1 c1 r2 c2)
+    (let ((rows (1+ (- r2 r1)))
+          (cols (1+ (- c2 c1))))
+     (setf (rows frame) rows
+           (cols frame) cols
+           (current-row frame) (1+ (truncate (rows frame) 2))
+           (current-col frame) (1+ (truncate (cols frame) 2))
+           (minimum-col frame) (+ 1    2)
+           (maximum-col frame) (- cols 2))))
 
-  (defun render-frame (frame)
-    (with-buffer (frame)
-      (funcall (rfn frame) frame)
-      (ctl (:fls))))
+  (defun animation-demo (frame)
+    (let* ((rows (rows frame))
+           (cols (cols frame))
+           (speed (sqr-speed frame))
+           (now (get-internal-real-time))
+           (delta (/ (- now (last-time frame))
+                     internal-time-units-per-second))
+           (direction (direction frame))
+           (current-col (current-col frame))
+           (minimum-col (minimum-col frame))
+           (maximum-col (maximum-col frame)))
+      ;; Set colors and clear the window background.
+      (ctl (:bgc #x44440000)
+           (:fgc #xffbb0000)
+           (:clr 1 1 rows cols))
+      ;; Advance the square.
+      (incf current-col (* delta speed direction))
+      ;; Draw the rectangle.
+      (loop with row = (current-row frame)
+            with col = (alexandria:clamp (round current-col)
+                                         minimum-col
+                                         maximum-col)
+            for r from (- row 1) upto (+ row 1)
+            do (loop for c from (- col 2) upto (+ col 2)
+                     do (out (:row r :col c
+                              ;:bgc #xffffff00
+                              :fgc #xff00ff00) "#")))
+      ;; Update variables
+      (setf (current-col frame) current-col
+            (direction frame) (cond ((< current-col minimum-col) +1)
+                                    ((> current-col maximum-col) -1)
+                                    (t direction))
+            (last-time frame) now)))
 
-  (defun render-window (frame)
-    (multiple-value-bind (wr1 wc1 wr2 wc2) (fsz frame)
-      (ctl (:bgc #x111111)
-           (:fgc #xbbbbbb))
-      (clear-rectangle wr1 wc1 wr2 (1+ wc2))
-      (let ((col (1+ wc2)))
-        (out (:row wr1 :col col :fgc #xff2244) "x")
-        (out (:row (+ wr1 1) :col col) "o")
-        (out (:row (+ wr1 2) :col col) ">")
-        (out (:row (- wr2 0) :col col) "/"))
-      (render-frame frame)))
+  (defun make-animation-demo (&rest args)
+    (apply #'make-instance 'animation-frame :fn 'animation-demo args))
+
+  (defun make-report-demo (&rest args)
+    (flet ((reporter (frame)
+             (let ((str "I'd like to report an event here!")
+                   (rows (rows frame)))
+               (ctl (:bgc #x00000000))
+               (clear-rectangle 1 1 rows (cols frame))
+               (loop for row from 1 upto rows
+                     for id from 0
+                     for string = (format nil "XXX ~d/~d: ~a" id (1- rows) str)
+                     do (out (:row row :col 1 :fgc #xff888800) string)))))
+      (apply #'make-instance 'frame :fn #'reporter args)))
 #+END_SRC
 
-Constructors also change. Most notably drawing starts from
-[1,1]. Additionally ~make-report-frame~ accepts fifth argument saying
-how many lines should the demo have. We'll use that to illustrate
-scrolling.
+#+CAPTION: New demos
+#+NAME:   fig:new-demos
+[[./static/02-all-demos.webm]]
 
-#+BEGIN_SRC lisp
-(defun make-noise-frame (r1 c1 r2 c2)
-  (flet ((make-noise-renderer (color)
-           (lambda (frame)
-             (loop for row from 1 upto (rows frame)
-                   do (loop for col from 1 upto (cols frame)
-                            do (out (:row row
-                                     :col col
-                                     :bgc (alexandria:random-elt
-                                           `(#x000000 #x080808))
-                                     :fgc color)
-                                    (alexandria:random-elt '("+" "-")))))))
-         (random-color ()
-           (random (1+ #xffffff))))
-    (make-instance 'frame
-                   :rfn (make-noise-renderer (random-color))
-                   :r1 r1 :c1 c1 :r2 r2 :c2 c2
-                   :rows (1+ (- r2 r1))
-                   :cols (1+ (- c2 c1)))))
+When we look at these demos we can recognize, that each uses the
+buffer differently. Report demo has now a constant output which
+doesn't change, but we can easily imagine, that it is a buffer with a
+text which may change at some point of time, until then the output
+remains constant.
 
-(defun make-animation-frame (r1 c1 r2 c2 speed)
-  (let* ((last-time (get-internal-real-time))
-         (dc 1)
-         (cols (1+ (- c2 c1)))
-         (rows (1+ (- r2 r1)))
-         (current-row (1+ (truncate rows 2)))
-         (current-col 2))
-    (flet ((draw-square ()
-             (ctl (:bgc #x444400)
-                  (:fgc #xffbb00)
-                  (:clr 1 1 rows cols))
-             (let* ((now (get-internal-real-time))
-                    (delta (- now last-time))
-                    (seconds (/ delta internal-time-units-per-second)))
-               (incf current-col (* seconds speed dc))
-               (setf last-time now))
-             (cond ((>= (+ current-col 2) cols)
-                    (setf dc -1))
-                   ((<= (- current-col 2) 1)
-                    (setf dc +1)))
-             (setf current-col
-                   (alexandria:clamp current-col 2 (- cols 2)))
-             (loop with row = current-row
-                   with col = (round current-col)
-                   for r from (1- row) upto (1+ row)
-                   do (loop for c from (- col 2) upto (+ col 2)
-                            do (out (:row r :col c) "#")))))
-      (make-instance 'frame
-                     :rfn (lambda (frame)
-                            (declare (ignore frame))
-                            (draw-square))
-                     :r1 r1 :c1 c1 :r2 r2 :c2 c2
-                     :rows rows
-                     :cols cols))))
+| demo      | display     | change source     |
+|-----------+-------------+-------------------|
+| lambda    | incremental | a new frame (fps) |
+| noise     | full redraw | a new frame (fps) |
+| animation | incremental | a time slice      |
+| report    | full redraw | asynchronous      |
 
-(defun make-report-frame (r1 c1 r2 c2 &optional (rows 10))
-  (flet ((reporter (frame)
-           (declare (ignore frame))
-           (let ((str "I'd like to report an event here!"))
-             (ctl (:bgc #x000000))
-             (clear-rectangle 1 1 rows 50)
-             (loop for row from 1 upto rows
-                   for id from 0
-                   for string = (format nil "XXX ~d/~d: ~a" id (1- rows) str)
-                   do (out (:row row :col 1 :fgc #xff8888) string)))))
-    (make-instance 'frame
-                   :rfn #'reporter :vbuf *console*
-                   :r1 r1 :c1 c1 :r2 r2 :c2 c2
-                   :rows rows
-                   :cols 50)))
-#+END_SRC
+With our rendering modes we can model each behavior, however the frame
+manager demo exhibits only one model: a full redraw on a new scene.
+This is certainly correct given that we buffer output, however it is
+not optimal.
 
-Now we'll improve the active window selection. ~C-u~ circulates the
-active window and decorations change color to distinguish it. To
-deselect windows press ~C-i~. Moreover we'll add key bindings to
-scroll buffers.
+We'll call the full redraw on a new frame an "immediate" mode, while
+all others will fall into a "retained" mode category. Notice, that in
+the former case when the console is in a buffered mode, having the
+noise demo frame in a direct rendering mode is conceptually correct.
 
-#+BEGIN_SRC lisp
-  (defun handle-event (fm event)
-    #|...|#
-    ((keyp event #\U :c)
-     (alexandria:if-let ((cur (active fm)))
-       (let* ((fms (frames fm))
-              (pos (position cur fms))
-              (new (mod (1+ pos) (length fms))))
-         (setf (active fm) (elt fms new)))
-       (setf (active fm) (first (frames fm)))))
-    ((keyp event #\I :c)
-     (setf (active fm) nil))
-    ((keyp event :f5)
-     (ctl (:ffb)))
-    ((keyp event :key-up)
-     (alexandria:when-let ((frame (active fm)))
-       (scroll-buffer frame -1 0)))
-    ((keyp event :key-left)
-     (alexandria:when-let ((frame (active fm)))
-       (scroll-buffer frame 0 -1)))
-    ((keyp event :key-down)
-     (alexandria:when-let ((frame (active fm)))
-       (scroll-buffer frame 1 0)))
-    ((keyp event :key-right)
-     (alexandria:when-let ((frame (active fm)))
-       (scroll-buffer frame 0 1)))
-    ((keyp event :page-up)
-     (alexandria:when-let ((frame (active fm)))
-       (scroll-buffer frame -4 0)))
-    ((keyp event :page-down)
-     (alexandria:when-let ((frame (active fm)))
-       (scroll-buffer frame 4 0))))
-
-  (defun render-options (frame)
-    (multiple-value-bind (wr1 wc1 wr2 wc2) (fsz frame)
-      (let ((col (1+ wc2)))
-        (out (:row wr1 :col col :fgc #xff2244) "x")
-        (out (:row (+ wr1 1) :col col) "o")
-        (out (:row (+ wr1 2) :col col) ">")
-        (loop for row from (+ wr1 3) upto (- wr2 2)
-              do (out (:row row :col col) " "))
-        (if (or (> (rows frame) (1+ (- wr2 wr1)))
-                (> (cols frame) (1+ (- wc2 wc1))))
-            (out (:row (1- wr2) :col col) "&")
-            (out (:row (1- wr2) :col col) " "))
-        (out (:row wr2 :col col) "/"))))
-
-  (defun render-window (frame activep)
-    (multiple-value-bind (wr1 wc1 wr2 wc2) (fsz frame)
-      (ctl (:bgc (if activep #x444488 #x111111))
-           (:fgc (if activep #xffffff #xbbbbbb)))
-      (clear-rectangle wr1 wc1 wr2 wc2)
-      (render-options frame)
-      (render-frame frame)))
-
-  (defun display-screen (fm)
-    (let ((active (active fm)))
-      (dolist (frame (frames fm))
-        (unless (eq frame active)
-          (render-window frame nil)))
-      (when active
-        (render-window active t))))
-#+END_SRC
-
-#+CAPTION: Scrolling a buffer
-#+NAME:   fig:scrolling
-[[./static/02-scrolling.webm]]
+In order to prevent overexposing of the immediate windows we need to
+introduce a concept of a "damaged region", so only the damaged part of
+a retained window is redrawn without re-displaying whole content.
 

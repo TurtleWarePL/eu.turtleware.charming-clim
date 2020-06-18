@@ -15,8 +15,8 @@
     (reset-terminal)))
 
 (defun close-terminal (handler)
-  (reset-terminal)
-  (disable-raw handler))
+  (disable-raw handler)
+  (reset-terminal))
 
 (defvar *terminal*)
 
@@ -27,17 +27,13 @@
     "The ESC character (#\esc)."))
 
 
-(defvar *inhibit* nil)
-(defvar *count* nil)
-
+(defvar *counter* 0)
 (defun put (&rest args)
   "Put raw string on a terminal"
-  (unless *inhibit*
-    (let* ((payload (format nil "~{~a~}" args))
-           (length (length payload)))
-      (when *count*
-        (incf *count* length))
-      (princ payload *terminal*))))
+  (let* ((str (format nil "~{~a~}" args))
+         (len (length str)))
+    (incf *counter* len)
+    (princ str *terminal*)))
 
 (defun esc (&rest args)
   "Escape sequence"
