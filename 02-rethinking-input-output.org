@@ -8,8 +8,7 @@ for the terminal starting from zero. After reading [[https://turtleware.eu/posts
 should have a good grasp of how to control and read input from the
 terminal. It is time to refine things for efficiency and ease of use.
 If you didn't follow the last part, here is the archive with the
-[[https://turtleware.eu/static/misc/01-controlling-the-terminal.tar.gz][source code]] which will serve as a starter for this post. If you like
-this kind of work, you can [[https://www.patreon.com/jackdaniel_kochmanski][toss a coin to your Lisper]] :-).
+[[https://turtleware.eu/static/misc/01-controlling-the-terminal.tar.gz][source code]] which will serve as a starter for this post.
 
 Right now our I/O is synchronous with the terminal. When we call ~out~
 or ~ctl~, the characters are sent to it immedietely, and we read the
@@ -36,15 +35,15 @@ higher abstractions build upon lower ones and things may go awry.
 ... except for the problem of too many layers of indirection.
 #+END_QUOTE
 
-For now we'll define two packages: ~eu.turtleware.charming-clim/ll~
-and ~eu.turtleware.charming-clim.terminal/hl~ with low and high level
+For now we'll define two packages: ~eu.turtleware.charming-clim/l0~
+and ~eu.turtleware.charming-clim.terminal/l1~ with different levels of
 abstraction for accessing the terminal. They are meant only as means
-to export symbols, all implementation is made in a single package.
-This practice greatly improves quality of life of person who works
+to export symbols, all implementation is done in a single package.
+This practice greatly improves quality of life of the person who works
 with Common Lisp packages. Now create a file ~packages.lisp~.
 
 #+BEGIN_SRC lisp
-  (defpackage #:eu.turtleware.charming-clim/ll
+  (defpackage #:eu.turtleware.charming-clim/l0
     (:export #:init-terminal
              #:close-terminal
              #:*terminal*
@@ -73,13 +72,13 @@ with Common Lisp packages. Now create a file ~packages.lisp~.
              #:set-cursor-visibility
              #:set-mouse-tracking))
 
-  (defpackage #:eu.turtleware.charming-clim/hl
+  (defpackage #:eu.turtleware.charming-clim/l1
     (:export #:with-console #:out #:ctl))
 
   (defpackage #:eu.turtleware.charming-clim
     (:use #:common-lisp
-          #:eu.turtleware.charming-clim/ll
-          #:eu.turtleware.charming-clim/hl))
+          #:eu.turtleware.charming-clim/l0
+          #:eu.turtleware.charming-clim/l1))
 #+END_SRC
 
 We'll take this opportunity to make function naming more consistent
@@ -1409,30 +1408,30 @@ the first row (similarily for columns).
 #+END_SRC
 
 Finally the function ~set-cell~ will trace the cell state and modify
-its cached value disregarding of the rendering mode. When a cell is
-dirty it means that it should be redrawn when flushing the buffer in
-the indirect rendering mode.
+its cached. When a cell is dirty it means that it should be redrawn
+when flushing the buffer in the indirect rendering mode.
 
 #+BEGIN_SRC lisp
   (defmethod set-cell ((buf buffer) row col str fgc bgc)
     (let ((rendering-mode (rnd buf))
           (row (or row (row buf)))
           (col (or col (col buf))))
-      (iterate-cells (ch crow ccol wrap-p)
-          (buf row col (string str))
-        (when (inside-p buf crow ccol)
-          (let* ((cell (get-cell buf crow ccol))
-                 (clean (and (not (dirty-p cell))
-                             (eql ch (ch cell))
-                             (eql fgc (fg cell))
-                             (eql bgc (bg cell)))))
-            (unless clean
-              (setf (ch cell) ch
-                    (fg cell) (or fgc (fgc buf))
-                    (bg cell) (or bgc (bgc buf))))
-            (setf (dirty-p cell)
-                  (and (not clean)
-                       (not (eq rendering-mode :wrt)))))))
+      (when (member rendering-mode '(:buf :wrt))
+       (iterate-cells (ch crow ccol wrap-p)
+           (buf row col (string str))
+         (when (inside-p buf crow ccol)
+           (let* ((cell (get-cell buf crow ccol))
+                  (clean (and (not (dirty-p cell))
+                              (eql ch (ch cell))
+                              (eql fgc (fg cell))
+                              (eql bgc (bg cell)))))
+             (unless clean
+               (setf (ch cell) ch
+                     (fg cell) (or fgc (fgc buf))
+                     (bg cell) (or bgc (bgc buf))))
+             (setf (dirty-p cell)
+                   (and (not clean)
+                        (not (eq rendering-mode :wrt))))))))
       (when (member rendering-mode '(:dir :wrt))
         (put-cell buf row col str fgc bgc))))
 #+END_SRC
@@ -1458,39 +1457,40 @@ unless we wrap over the right edge.
 #+BEGIN_SRC lisp
   (defmethod flush-buffer ((buffer console) &rest args &key force)
     (declare (ignore args))
-    (let* ((cursor (cur buffer))
-           (last-fg (fgc cursor))
-           (last-bg (bgc cursor))
-           (gap 0))
-      (set-cursor-position 1 1)
-      (iterate-cells (cell crow ccol wrap-p)
-          (buffer 1 1 (make-array (* (cols buffer)
-                                     (rows buffer))
-                                  :displaced-to (data buffer)))
-        (when wrap-p
-          (set-cursor-position crow ccol)
-          (setf gap 0))
-        (if (and cell (or force (dirty-p cell)))
-            (let ((ch (ch cell))
-                  (fg (fg cell))
-                  (bg (bg cell)))
-              (unless (= fg last-fg)
-                (set-foreground-color fg)
-                (setf last-fg fg))
-              (unless (= bg last-bg)
-                (set-background-color bg)
-                (setf last-bg bg))
-              (when (plusp gap)
-                (cursor-right gap)
-                (setf gap 0))
-              (put ch)
-              (setf (dirty-p cell) nil))
-            (if force
-                (put #\space)
-                (incf gap))))
-      (set-cursor-position (row cursor) (col cursor))
-      (set-foreground-color (fgc cursor))
-      (set-background-color (bgc cursor)))
+    (unless (eql (rnd buffer) :dir)
+      (let* ((cursor (cur buffer))
+             (last-fg (fgc cursor))
+             (last-bg (bgc cursor))
+             (gap 0))
+        (set-cursor-position 1 1)
+        (iterate-cells (cell crow ccol wrap-p)
+            (buffer 1 1 (make-array (* (cols buffer)
+                                       (rows buffer))
+                                    :displaced-to (data buffer)))
+          (when wrap-p
+            (set-cursor-position crow ccol)
+            (setf gap 0))
+          (if (and cell (or force (dirty-p cell)))
+              (let ((ch (ch cell))
+                    (fg (fg cell))
+                    (bg (bg cell)))
+                (unless (= fg last-fg)
+                  (set-foreground-color fg)
+                  (setf last-fg fg))
+                (unless (= bg last-bg)
+                  (set-background-color bg)
+                  (setf last-bg bg))
+                (when (plusp gap)
+                  (cursor-right gap)
+                  (setf gap 0))
+                (put ch)
+                (setf (dirty-p cell) nil))
+              (if force
+                  (put #\space)
+                  (incf gap))))
+        (set-cursor-position (row cursor) (col cursor))
+        (set-foreground-color (fgc cursor))
+        (set-background-color (bgc cursor))))
     (finish-output *terminal*))
 #+END_SRC
 
@@ -1534,44 +1534,54 @@ virtual buffer which is another surface or something else). Add a new
 file ~surface.lisp~ to the project.
 
 #+BEGIN_SRC lisp
-(defclass surface (buffer bbox)
-  ((sink :initarg :sink :accessor sink :documentation "Flush destination")))
+  (defclass surface (buffer bbox)
+    ((sink :initarg :sink :accessor sink :documentation "Flush destination")))
 
-(defmethod initialize-instance :after
-    ((buf surface) &key rows cols)
-  (let ((clip (clip buf)))
-    (setf (r2 clip) rows
-          (c2 clip) cols))
-  (adjust-array (data buf) (list rows cols) :initial-element nil))
+  (defmethod initialize-instance :after
+      ((buf surface) &key data rows cols r1 c1 r2 c2)
+    (destructuring-bind (d0 d1) (array-dimensions data)
+      (unless rows
+        (if (not (zerop d0))
+            (setf rows d0)
+            (setf rows (1+ (- r2 r1))))
+        (setf (rows buf) rows))
+      (unless cols
+        (if (not (zerop d1))
+            (setf cols d1)
+            (setf cols (1+ (- c2 c1))))
+        (setf (cols buf) cols)))
+    (let ((clip (clip buf)))
+      (setf (r2 clip) rows
+            (c2 clip) cols))
+    (adjust-array (data buf) (list rows cols) :initial-element nil))
 
-(defmethod put-cell ((buf surface) row col ch fg bg)
-  (let ((vrow (1- (+ (r1 buf) row)))
-        (vcol (1- (+ (c1 buf) col))))
-    (when (and (<= (r1 buf) vrow (r2 buf))
-               (<= (c1 buf) vcol (c2 buf)))
-      (set-cell (sink buf) vrow vcol ch fg bg))))
+  (defmethod put-cell ((buf surface) row col ch fg bg)
+    (let ((vrow (1- (+ (r1 buf) row)))
+          (vcol (1- (+ (c1 buf) col))))
+      (when (and (<= (r1 buf) vrow (r2 buf))
+                 (<= (c1 buf) vcol (c2 buf)))
+        (set-cell (sink buf) vrow vcol ch fg bg))))
 
-(defmethod flush-buffer ((buffer surface) &rest args &key force)
-  (declare (ignore args))
-  (loop for row from 1 upto (rows buffer)
-        do (loop for col from 1 upto (cols buffer)
-                 for cell = (get-cell buffer row col)
-                 when (or force (dirty-p cell))
-                   do (put-cell buffer row col (ch cell) (fg cell) (bg cell))
-                      (setf (dirty-p cell) nil))))
+  (defmethod flush-buffer ((buffer surface) &rest args &key force)
+    (declare (ignore args))
+    (unless (eq (rnd buffer) :dir)
+      (loop for row from 1 upto (rows buffer)
+            do (loop for col from 1 upto (cols buffer)
+                     for cell = (get-cell buffer row col)
+                     when (or force (dirty-p cell))
+                       do (put-cell buffer row col (ch cell) (fg cell) (bg cell))
+                          (setf (dirty-p cell) nil)))))
 #+END_SRC
 
 And we'll make the class ~frame~ inherit from the class ~surface~:
 
 #+BEGIN_SRC lisp
-(defclass frame (surface)
-  ((fn :initarg :fn :accessor fn)
-   (ap :initarg :ap :accessor ap))
-  (:default-initargs :r1 1 :c1 1 :r2 24 :c2 80
-                     :rows 24
-                     :cols 80
-                     :sink *buffer*
-                     :fn (constantly t) :ap nil))
+  (defclass frame (surface)
+    ((fn :initarg :fn :accessor fn)
+     (ap :initarg :ap :accessor ap))
+    (:default-initargs :r1 1 :c1 1 :r2 24 :c2 80
+                       :sink *buffer*
+                       :fn (constantly t) :ap nil))
 #+END_SRC
 
 Now when we render the application, we render to its own buffer which
@@ -1621,8 +1631,8 @@ overexposed.
 #+NAME: fig:surface
 [[./static/02-surface.webm]]
 
-We may easily address this problem by forcing all cells to be
-flushed.
+We may easily address that by forcing all cells to be flushed. Later
+on we will tackle this problem from a different angle.
 
 #+BEGIN_SRC lisp
   (defun render-application (fm frame)
@@ -1658,14 +1668,39 @@ the function ~put-cell~ to account for that.
         (set-cell (sink buf) vrow vcol ch fg bg))))
 
   (defun scroll-buffer (buf row-dx col-dx)
+    (unless (typep buf 'surface)
+      (return-from scroll-buffer))
     (incf (row0 buf) row-dx)
     (incf (col0 buf) col-dx))
 
   (defun move-buffer (buf row-dx col-dx)
+    (unless (typep buf 'surface)
+      (return-from move-buffer))
     (incf (r1 buf) row-dx)
     (incf (r2 buf) row-dx)
     (incf (c1 buf) col-dx)
     (incf (c2 buf) col-dx))
+#+END_SRC
+
+This is something to be used by API clients, so operations ~mov~ and
+~scr~ are added to the ~ctl~ macro:
+
+#+BEGIN_SRC lisp
+  (defmacro ctl (&rest operations)
+    `(let ((buf *buffer*))
+       (declare (ignorable buf))
+       ,@(loop for op in operations
+               collect (destructuring-bind (name &rest args) op
+                         (ecase name
+                           (:fgc `(setf (fgc buf) ,@args))
+                           (:bgc `(setf (bgc buf) ,@args))
+                           (:row `(setf (row buf) ,@args))
+                           (:col `(setf (col buf) ,@args))
+                           (:rnd `(setf (rnd buf) ,@args))
+                           (:mov `(move-buffer ,@args))
+                           (:scr `(scroll-buffer ,@args))
+                           (:clr `(clear-rectangle ,@args))
+                           (:fls `(flush-buffer buf ,@args)))))))
 #+END_SRC
 
 We'll add now new key bindings in ~handle-event~ to scroll and move
@@ -1735,28 +1770,28 @@ clear the window background in ~render-decorations~.
              (error "bam"))
             ((keyp event :key-up)
              (alexandria:when-let ((frame (active fm)))
-               (scroll-buffer frame -1 0)))
+               (ctl (:scr frame -1 0))))
             ((keyp event :key-left)
              (alexandria:when-let ((frame (active fm)))
-               (scroll-buffer frame 0 -1)))
+               (ctl (:scr frame 0 -1))))
             ((keyp event :key-down)
              (alexandria:when-let ((frame (active fm)))
-               (scroll-buffer frame 1 0)))
+               (ctl (:scr frame 1 0))))
             ((keyp event :key-right)
              (alexandria:when-let ((frame (active fm)))
-               (scroll-buffer frame 0 1)))
+               (ctl (:scr frame 0 1))))
             ((keyp event :key-up :c)
              (alexandria:when-let ((frame (active fm)))
-               (move-buffer frame -1 0)))
+               (ctl (:mov frame -1 0))))
             ((keyp event :key-down :c)
              (alexandria:when-let ((frame (active fm)))
-               (move-buffer frame 1 0)))
+               (ctl (:mov frame 1 0))))
             ((keyp event :key-left :c)
              (alexandria:when-let ((frame (active fm)))
-               (move-buffer frame 0 -1)))
+               (ctl (:mov frame 0 -1))))
             ((keyp event :key-right :c)
              (alexandria:when-let ((frame (active fm)))
-               (move-buffer frame 0 1))))))
+               (ctl (:mov frame 0 1)))))))
 #+END_SRC
 
 As a reminder, we change the active window with ~C-n~. Scrolling is
@@ -1834,6 +1869,8 @@ line has only 100 characters, we'll end at the line beginning).
         (setf (col0 buf) col0))))
 
   (defun scroll-buffer (buf row-dx col-dx)
+    (unless (typep buf 'surface)
+      (return-from scroll-buffer))
     (flet ((quantity (screen-size buffer-size dx)
              (if (alexandria:xor (> screen-size buffer-size)
                                  (minusp dx))
@@ -1851,6 +1888,29 @@ line has only 100 characters, we'll end at the line beginning).
                     (quantity width (cols buf) col-dx)))))))
 #+END_SRC
 
+Multiple surfaces may be attached to the same virtual buffer data
+array. It is a matter of specifying correct initargs. We'll add a hack
+because our frame manager currently assumes that the surface is a
+frame and thus has a method ~fn~ returning the display function.
+
+#+BEGIN_SRC lisp
+  (defun ensure-demos (fm)
+    (unless (frames fm)
+      (let* ((lambda-demo (make-lambda-demo :r1 5 :c1 20 :r2 16 :c2 45))
+             (2nd-surface (make-instance 'surface
+                                         :data (data lambda-demo)
+                                         :sink *buffer*
+                                         :rows 12 :cols 40
+                                         :r1 20 :c1 20 :r2 30 :c2 45)))
+        (setf (frames fm)
+              (list (make-noise-demo :r1 8 :c1 25 :r2 20 :c2 60 :ap '(#x00ff0000))
+                    lambda-demo
+                    2nd-surface)))))
+
+  (defmethod fn (object)
+    (constantly t))
+#+END_SRC
+
 * Retained display mode
 
 Let's introduce a few more examples to have a few specimen we could
@@ -1858,6 +1918,14 @@ talk about. The animation demo shows a square which bounces from the
 left to the right edge, and the report demo shows lines of text.
 
 #+BEGIN_SRC lisp
+  (defun ensure-demos (fm)
+    (unless (frames fm)
+      (setf (frames fm)
+            (list (make-lambda-demo    :r1 2  :c1 4  :r2 13 :c2 43)
+                  (make-noise-demo     :r1 2  :c1 50 :r2 13 :c2 77)
+                  (make-animation-demo :r1 5  :c1 10 :r2 11 :c2 70)
+                  (make-report-demo    :r1 15 :c1 10 :r2 20 :c2 70 :rows 50)))))
+
   (defclass animation-frame (frame)
     ((sqr-speed :initarg :sqr-speed :reader sqr-speed)
      (direction :initarg :direction :accessor direction)
@@ -1871,13 +1939,11 @@ left to the right edge, and the report demo shows lines of text.
                        :last-time (get-internal-real-time)))
 
   (defmethod initialize-instance :after
-      ((frame animation-frame) &key r1 c1 r2 c2)
-    (let ((rows (1+ (- r2 r1)))
-          (cols (1+ (- c2 c1))))
-     (setf (rows frame) rows
-           (cols frame) cols
-           (current-row frame) (1+ (truncate (rows frame) 2))
-           (current-col frame) (1+ (truncate (cols frame) 2))
+      ((frame animation-frame) &rest args)
+    (let ((rows (rows frame))
+          (cols (cols frame)))
+     (setf (current-row frame) (1+ (truncate rows 2))
+           (current-col frame) (1+ (truncate cols 2))
            (minimum-col frame) (+ 1    2)
            (maximum-col frame) (- cols 2))))
 
@@ -1936,29 +2002,57 @@ left to the right edge, and the report demo shows lines of text.
 [[./static/02-all-demos.webm]]
 
 When we look at these demos we can recognize, that each uses the
-buffer differently. Report demo has now a constant output which
-doesn't change, but we can easily imagine, that it is a buffer with a
-text which may change at some point of time, until then the output
-remains constant.
+buffer differently. The old demos "lambda" and "noise" outputs change
+synchronously when a new frame is drawn. The new demos change based on
+asynchronous events - for the "animation" demo that is a time slice,
+for the "report" demo it is (hypothetically) a buffer contents change.
 
-| demo      | display     | change source     |
-|-----------+-------------+-------------------|
-| lambda    | incremental | a new frame (fps) |
-| noise     | full redraw | a new frame (fps) |
-| animation | incremental | a time slice      |
-| report    | full redraw | asynchronous      |
+| demo      | display     | change source |
+|-----------+-------------+---------------|
+| lambda    | incremental | synchronous   |
+| noise     | full redraw | synchronous   |
+| animation | incremental | asynchronous  |
+| report    | full redraw | asynchronous  |
 
 With our rendering modes we can model each behavior, however the frame
-manager demo exhibits only one model: a full redraw on a new scene.
-This is certainly correct given that we buffer output, however it is
-not optimal.
+manager demo exhibits only one: synchronous full redraw. This option
+is correct for each demo, but it is suboptimal. We'll call it an
+immediate display, as opposed to a retained display where the buffer
+is not constantly filled with a new content.
 
-We'll call the full redraw on a new frame an "immediate" mode, while
-all others will fall into a "retained" mode category. Notice, that in
-the former case when the console is in a buffered mode, having the
-noise demo frame in a direct rendering mode is conceptually correct.
+A difference between the display and the repaint is not apparent. In
+term of buffers it could be explained like this:
 
-In order to prevent overexposing of the immediate windows we need to
-introduce a concept of a "damaged region", so only the damaged part of
-a retained window is redrawn without re-displaying whole content.
+- displaying :: drawing on the buffer in ~:buf~ mode
+- repainting :: flushing the buffer
 
+The immediate rendering mode coalasces both concepts into one, so it
+could be described as drawing on the buffer in the ~:dir~ mode, or
+redisplaing it before each repaint.
+
+In the retained rendering mode the separation of concepts is
+important. Displaying the content once may save some time (i.e in the
+report demo we don't need to reprint the same buffer over and over
+again in each frame).
+
+Moreover, at this point we may talk about display lists, that is lists
+of full blown objects which have their own repaint methods. In CLIM a
+display list is called the ~output-record-history~, and elements of
+said list are ~output-records~. Compound output records may contain
+more (inner) output records so objects in such display list form a
+tree with z-ordering.
+
+We will explore the topic of retained display and display lists
+further in another post which will introduce yet another layer of
+abstraction.
+
+* Conclusions
+
+I hope you've liked this post as much as I've enjoyed working on it.
+It has grown considerably longer than I have anticipated, so I've
+decided to postpone the discussion of display lists and damage regions
+for later time. The next post in this serie will cover input
+processing.
+
+If you like this kind of work, you may [[https://www.youtube.com/watch?v=RziVt_1Ac7g][toss a coin to your Lisper]] by
+[[https://turtleware.eu/donate.html][supporting]] me financially.

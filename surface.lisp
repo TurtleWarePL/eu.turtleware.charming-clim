@@ -7,7 +7,18 @@
   (:default-initargs :row0 0 :col0 0))
 
 (defmethod initialize-instance :after
-    ((buf surface) &key rows cols)
+    ((buf surface) &key data rows cols r1 c1 r2 c2)
+  (destructuring-bind (d0 d1) (array-dimensions data)
+    (unless rows
+      (if (not (zerop d0))
+          (setf rows d0)
+          (setf rows (1+ (- r2 r1))))
+      (setf (rows buf) rows))
+    (unless cols
+      (if (not (zerop d1))
+          (setf cols d1)
+          (setf cols (1+ (- c2 c1))))
+      (setf (cols buf) cols)))
   (let ((clip (clip buf)))
     (setf (r2 clip) rows
           (c2 clip) cols))

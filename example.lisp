@@ -9,8 +9,6 @@
   ((fn :initarg :fn :accessor fn)
    (ap :initarg :ap :accessor ap))
   (:default-initargs :r1 1 :c1 1 :r2 24 :c2 80
-                     :rows 24
-                     :cols 80
                      :sink *buffer*
                      :fn (constantly t) :ap nil))
 
@@ -225,13 +223,11 @@
                      :last-time (get-internal-real-time)))
 
 (defmethod initialize-instance :after
-    ((frame animation-frame) &key r1 c1 r2 c2)
-  (let ((rows (1+ (- r2 r1)))
-        (cols (1+ (- c2 c1))))
-   (setf (rows frame) rows
-         (cols frame) cols
-         (current-row frame) (1+ (truncate (rows frame) 2))
-         (current-col frame) (1+ (truncate (cols frame) 2))
+    ((frame animation-frame) &rest args)
+  (let ((rows (rows frame))
+        (cols (cols frame)))
+   (setf (current-row frame) (1+ (truncate rows 2))
+         (current-col frame) (1+ (truncate cols 2))
          (minimum-col frame) (+ 1    2)
          (maximum-col frame) (- cols 2))))
 
