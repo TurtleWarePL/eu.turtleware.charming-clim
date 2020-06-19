@@ -11,7 +11,7 @@ If you didn't follow the last part, here is the archive with the
 [[https://turtleware.eu/static/misc/01-controlling-the-terminal.tar.gz][source code]] which will serve as a starter for this post.
 
 Right now our I/O is synchronous with the terminal. When we call ~out~
-or ~ctl~, the characters are sent to it immedietely, and we read the
+or ~ctl~, the characters are sent to it immediately, and we read the
 input with ~read-input~ until the stream is empty. The model
 introduced in the previous post is certainly simple, but simple models
 tend to be hard to use efficiently. We'll settle on _easy_ instead.
@@ -1252,7 +1252,7 @@ demo.
 [[/static/video/02-flicker.webm]]
 
 The flicker is because of how we draw things. We put each cell
-immedietely on the screen, so first we draw the first window, then on
+immediately on the screen, so first we draw the first window, then on
 top of it the second window and then on top of it the third
 window. After that we repeat the process. This means that if we have
 two intersecting windows, then for part of the time it will have the
@@ -1278,7 +1278,7 @@ this functionality and allow switching rendering mode for each buffer
 with the ~ctl~ interface. Three modes will be defined: a direct
 rendering, an indirect rendering and a write-through rendering. The
 last one will combine the two: it will put the cell on the screen
-immedietely but it will also save its content in a buffer. We'll add
+immediately but it will also save its content in a buffer. We'll add
 three new functions to the virtual buffer protocol.
 
 #+BEGIN_SRC lisp
@@ -2064,7 +2064,7 @@ terms of our buffers it could be explained like this:
 
 The immediate rendering mode coalasces both concepts into one, so it
 could be described as drawing on the buffer in the ~:dir~ mode, or
-redisplaing it before each repaint.
+redisplaying it before each repaint.
 
 In the retained rendering mode, the separation of these concepts is
 important. Displaying the content once may save some time (i.e in the
