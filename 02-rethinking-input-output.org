@@ -14,7 +14,7 @@ Right now our I/O is synchronous with the terminal. When we call ~out~
 or ~ctl~, the characters are sent to it immedietely, and we read the
 input with ~read-input~ until the stream is empty. The model
 introduced in the previous post is certainly simple, but simple models
-tend to be hard to use efficiently . We'll settle on _easy_ instead.
+tend to be hard to use efficiently. We'll settle on _easy_ instead.
 In this post I'll focus on the output.
 
 * Layered abstraction
@@ -24,12 +24,13 @@ All problems in computer science can be solved by another level of
 indirection.
 #+END_QUOTE
 
-We'll build a convenient abstraction for writing console applications.
-It would be a shame though if we had abandoned means to manipulate the
-terminal directly. The library will present different APIs, so it is
-possible to cater to the programmer demands. In principle it is not
-feasible to use two different abstractions simultaneously because
-higher abstractions build upon lower ones and things may go awry.
+We'll build a convenient abstraction for writing the console
+applications. It would be a shame, though, if we had abandoned means
+to manipulate the terminal directly. The library will present
+different APIs, so it is possible to cater to the programmer needs. In
+principle it is not feasible to use two different abstractions
+simultaneously because higher abstractions build upon lower ones and
+things may go awry.
 
 #+BEGIN_QUOTE Unknown
 ... except for the problem of too many layers of indirection.
@@ -39,8 +40,8 @@ For now we'll define two packages: ~eu.turtleware.charming-clim/l0~
 and ~eu.turtleware.charming-clim.terminal/l1~ with different levels of
 abstraction for accessing the terminal. They are meant only as means
 to export symbols, all implementation is done in a single package.
-This practice greatly improves quality of life of the person who works
-with Common Lisp packages. Now create a file ~packages.lisp~.
+This practice greatly improves a quality of life of the person who
+works with Common Lisp packages. Now create a file ~packages.lisp~.
 
 #+BEGIN_SRC lisp
   (defpackage #:eu.turtleware.charming-clim/l0
@@ -82,7 +83,7 @@ with Common Lisp packages. Now create a file ~packages.lisp~.
 #+END_SRC
 
 We'll take this opportunity to make function naming more consistent
-and introduce functions for cursor manipulation. Rename functions
+and introduce the cursor manipulation utilities. Rename functions
 
 - ~(setf cursor-visibility)~ -> ~set-cursor-visibility~
 - ~(setf mouse-tracking)~    -> ~set-mouse-tracking~
@@ -90,8 +91,8 @@ and introduce functions for cursor manipulation. Rename functions
 
 and add escape sequences for manipulating the cursor. Don't forget to
 change references to renamed functions in other parts of the code (in
-a macro ~ctl~ and in functions ~initialize-instance~, ~(setf ptr)~ and
-~(setf cvp)~.
+the macro ~ctl~ and in functions ~initialize-instance~, ~(setf ptr)~
+and ~(setf cvp)~.
 
 #+BEGIN_SRC lisp
   (macrolet ((moveit (endch)
@@ -123,9 +124,10 @@ a macro ~ctl~ and in functions ~initialize-instance~, ~(setf ptr)~ and
         (setf +alt-mod+ +alt-mod*+)))
 #+END_SRC
 
-From now on when we talk about a low level abstraction we'll call the
-destination object the "terminal", while when we talk about high level
-abstraction we'll call it the "console". Rename the following symbols
+From now on, when we talk about the low level abstraction, we'll call
+the destination object a "terminal", while when we talk about the high
+level abstraction, we'll call its destination object a "console".
+Rename the following symbols
 
 - ~*console-io*~  -> ~*terminal*~
 - ~init-console~  -> ~init-terminal~
@@ -135,13 +137,13 @@ abstraction we'll call it the "console". Rename the following symbols
 
 and replace all references in the source code to use new symbols. Move
 the variable ~*terminal*~ and functions ~init-terminal~ and
-~close-terminal~ to the top below the foreign function definitions.
+~close-terminal~ to the top (below the foreign function definitions).
 
 We'll slightly refactor ~set-*-color~ functions. Instead of accepting
-each color separately it will consume a number representing the color
-RGBA value (each is one byte). For instance #ff000000 for a color red.
-The alpha channel will be ignored for now, but having it will save us
-another change of a data representation format.
+each color separately, functions will consume the number representing
+a color RGBA value. For instance #ff000000 for a color red. The alpha
+channel will be ignored for now, but having this component will save
+us another change of a data representation format.
 
 #+BEGIN_SRC lisp
   (defun set-foreground-color (color)
@@ -164,41 +166,50 @@ another change of a data representation format.
 and fix all references in the source code:
 
 #+BEGIN_SRC lisp
-(defmacro ctl (&rest operations)
-  `((:fgc `(setf (fgc *console*) ,@args))
-    (:bgc `(setf (bgc *console*) ,@args))))
+  (defmacro ctl (&rest operations)
+    `(#|...|#
+      (:fgc `(setf (fgc *console*) ,@args))
+      (:bgc `(setf (bgc *console*) ,@args))))
 
-(defclass console ()
-  (:default-initargs :fgc #xffa0a000 :bgc #x22222200))
+  (defclass console ()
+    #|...|#
+    (:default-initargs :fgc #xffa0a000 :bgc #x22222200))
 
-(defmethod (setf fgc) :after (rgba (instance console))
-  (set-foreground-color rgba))
+  (defmethod initialize-instance :after
+      ((instance console) &key fgc bgc pos cvp ptr)
+    #|...|#
+    (set-foreground-color fgc)
+    (set-background-color bgc))
 
-(defmethod (setf bgc) :after (rgba (instance console))
-  (set-background-color rgba))
+  (defmethod (setf fgc) :after (rgba (instance console))
+    (set-foreground-color rgba))
 
-(defun show-screen ()
-  (out (:bgc #x00000000 :fgc #xbb000000))
-  (out (:bgc #x00000000
-        :fgc (alexandria:random-elt '(#x00444400 #x00444400 #x00664400)))))
+  (defmethod (setf bgc) :after (rgba (instance console))
+    (set-background-color rgba))
+
+  (defun show-screen ()
+    #|...|#
+    (out (:bgc #x00000000 :fgc #xbb000000))
+    (out (:bgc #x00000000
+          :fgc (alexandria:random-elt '(#x00444400 #x00444400 #x00664400)))))
 
 #+END_SRC
 
-We'll move now parts related to the console to a separate file
+We'll now move parts related to the console to a separate file
 ~console.lisp~ in this order:
 
 - the variable ~*console*~ and the macro ~with-console~
-- clipping (variables and operators ~inside~ and ~with-clipping~)
+- clipping code (the clip variables and operators ~inside~ and ~with-clipping~)
 - macros ~letf~, ~out~ and ~ctl~
 - functions ~clear-rectangle~, ~get-cursor-position~ and
   ~update-console-dimensions~
 - the class ~console~ and its methods
 
-Finally the example code will be put in a file ~example.lisp~. Move
-there functions ~show-screen~ and ~start-display~.
+Finally, the example code will be put in a file ~example.lisp~. Move
+functions ~show-screen~ and ~start-display~ there.
 
-A ~defsystem~ form in the file ~eu.turtleware.charming-clim.asd~ looks
-now like this:
+The ~defsystem~ form in the file ~eu.turtleware.charming-clim.asd~ now
+looks like this:
 
 #+BEGIN_SRC lisp
   (defsystem "eu.turtleware.charming-clim"
@@ -213,17 +224,32 @@ now like this:
 
 * Virtual buffers
 
-Console is responsible for many things, so refactoring it to inherit
-from a class which represents only output makes sense. That will be
-also useful when we decide to add yet another layer of indirection.
-When implementing the ~buffer~ class we'll also fix unfortunate
-position representation as a cons and the clip area specification.
+The console object has many responsibilities, so refactoring it to
+inherit from a class which implements only parts related to the output
+makes sense. That will also be useful when we decide to add yet
+another layer of indirection.  When implementing the ~buffer~ class
+we'll also fix an unfortunate position representation as a ~cons~, and
+the clip area specification. Create a file ~output.lisp~ and add it to
+the asd file.
+
+#+BEGIN_SRC lisp
+  (defsystem "eu.turtleware.charming-clim"
+    :defsystem-depends-on (#:cffi)
+    :depends-on (#:alexandria #:cffi #:swank)
+    :components ((:cfile "raw-mode")
+                 (:file "packages")
+                 (:file "terminal" :depends-on ("packages"))
+                 (:file "output"  :depends-on ("packages"))
+                 (:file "console" :depends-on ("packages" "output" "terminal"))
+                 (:file "example" :depends-on ("packages" "console"))))
+#+END_SRC
+
 
 Macros ~out~ and ~ctl~ will operate on the current virtual buffer. In
-order to do that we will define a protocol which must be implemented
-by all virtual buffers. ~with-clipping~ becomes now a convenience
-macro expanding to a generic function ~invoke-with-clipping~. A macro
-~with-buffer~ is introduce to bind the current buffer, which is bound
+order to do that, we'll define a protocol which must be implemented by
+all virtual buffers. ~with-clipping~ now becomes a convenience macro
+expanding to a generic function ~invoke-with-clipping~. A macro
+~with-buffer~ is introduced to bind the current buffer, which is bound
 to the variable ~*buffer*~.
 
 #+BEGIN_SRC lisp
@@ -265,10 +291,10 @@ to the variable ~*buffer*~.
     `(let ((*buffer* ,object)) ,@body))
 #+END_SRC
 
-Implementing ~ctl~ and ~out~ macros function in these terms
-follows. We will leave out ~:cvp~ and ~:ptr~ options from the ~ctl~
-macro for a time being. ~letf~ and ~clear-rectangle~ are left
-unchanged.
+Implementing the ~ctl~ and ~out~ macros in these terms follows. We'll
+leave out the ~:cvp~ and ~:ptr~ options from the ~ctl~ macro for a
+time being. ~letf~ and ~clear-rectangle~ are left unchanged. Remove
+old macros from the ~console.lisp~ file.
 
 #+BEGIN_SRC lisp
   (defmacro letf (bindings &body body)
@@ -313,10 +339,10 @@ unchanged.
           do (out (:row r :col c1) str)))
 #+END_SRC
 
-What would be a protocol without the implementation? Clipping will be
+What would a protocol be without the implementation? Clipping will be
 implemented with the class ~clip~. This choice is transparent, because
 all functions are specialized on the buffer. Each buffer has its own
-clipping region. Abstract buffers don't know how to draw on a screen,
+clipping region. Virtual buffers don't know how to draw on a screen,
 so ~put-cell~ prints a warning.
 
 #+BEGIN_SRC lisp
@@ -374,9 +400,9 @@ so ~put-cell~ prints a warning.
                 (fn clip) old-fn)))))
 #+END_SRC
 
-Finally we can modify the console class itself. ~with-console~ binds
-buffer separately, so we have access to different ~*buffer*~ and
-~*console*~ at the same time.
+Finally, we can modify the console class itself. The macro
+~with-console~ binds a buffer separately, so we may access to both the
+output buffer and the console at the same time.
 
 #+BEGIN_SRC lisp
   (defmacro with-console ((&rest args
@@ -404,7 +430,7 @@ the clipping region.
 #+END_SRC
 
 And the class ~console~ itself is remodeled to inherit from the class
-~buffer~. Notice that we get rid of slots ~pos~ and ~app~
+~buffer~. Notice that we get rid of the slots ~pos~ and ~app~.
 
 #+BEGIN_SRC lisp
   (defclass console (buffer)
@@ -447,9 +473,10 @@ And the class ~console~ itself is remodeled to inherit from the class
     (set-cursor-visibility (not (null cvp))))
 #+END_SRC
 
-Putting a cell on the screen is a matter of setting the cursor
-position, cell colors and calling ~put~. It is the responsibility of
-~put-cell~ to verify, whether the cell is inside the clipping region.
+Putting a cell on the screen is a matter of first setting the cursor
+position and cell colors, and then calling the function ~put~. It is
+the responsibility of the function ~put-cell~ to verify, that the cell
+is inside a clipping region.
 
 #+BEGIN_SRC lisp
   (defmethod put-cell ((buffer console) row col ch fg bg)
@@ -460,9 +487,9 @@ position, cell colors and calling ~put~. It is the responsibility of
       (put ch)))
 #+END_SRC
 
-Finally we need to account for a change in the ~with-clipping~ macro
+Finally, we need to account for a change in the ~with-clipping~ macro
 to pass a buffer as the first argument and remove references to the
-~app~ accessor. Modify ~show-screen~:
+~app~ accessor. Modify the function ~show-screen~:
 
 #+BEGIN_SRC lisp
   (defun show-screen ()
@@ -494,12 +521,12 @@ to pass a buffer as the first argument and remove references to the
 #+END_SRC
 
 All these changes were pretty invasive, so make sure to restart the
-image and try running application once more to validate, that
-everything works.
+image and try running the application once more to ensure, that
+everything still works.
 
 #+CAPTION: New examples in action.
 #+NAME:   fig:examples
-[[./static/02-smoke-test.webm]]
+[[/static/video/02-smoke-test.webm]]
 
 * Writing the example application
 
@@ -521,11 +548,11 @@ a frame defined by its bounding box and a rendering function.
                        :fn (constantly t)))
 #+END_SRC
 
-Displaying the frame involves calling the rendering function with
-clipping enabled and showing decorations. Usually cell width is
+Displaying a frame involves calling the rendering function with
+clipping enabled, and showing decorations. Usually the cell width is
 smaller than its height, so drawing decorations as a vertical bar on
 one of the application sides makes more sense if we want to save some
-space. That's what we'll do. Active frame will be signified with a
+space. That's what we'll do. The active frame will be signified with a
 diffrent side bar color.
 
 #+BEGIN_SRC lisp
@@ -562,7 +589,8 @@ Current key actions:
 - C-U :: call the user action
 - C-E :: signal an error
 
-~start-display~ is slightly modified to behave better with errors.
+The function ~start-display~ is slightly modified to behave better
+with errors.
 
 #+BEGIN_SRC lisp
   (defun handle-event (fm event)
@@ -598,10 +626,10 @@ Current key actions:
           (error (sig) (error sig))))))
 #+END_SRC
 
-Define two application renderers so we have something to display. Note
-that each renderer must know its frame position. In other words
-~show-lambda~ as it is currently defined can't be moved as a
-frame. Noise demo is like a white noise, but in color.
+Define two application renderers so we have something to
+display. Note, that each renderer must know its frame position. In
+other words ~show-lambda~ as it is currently defined can't be moved as
+a frame. Noise demo is like a white noise, but in color.
 
 #+BEGIN_SRC lisp
   (defun lambda-demo (frame)
@@ -642,10 +670,10 @@ frame. Noise demo is like a white noise, but in color.
     (apply #'make-instance 'frame :fn #'noise-demo args))
 #+END_SRC
 
-~show-screen~ starts a loop which is responsible for updating the
-screen. We are not calling ~sleep~ anymore because we'll measure
-performance. At bottom we'll display a modeline printing whichever
-information we'll find useful.
+The function ~show-screen~ starts a loop which is responsible for
+updating the screen. We are not calling ~sleep~ anymore because we'll
+measure performance. At the bottom we'll display a modeline printing
+whichever information we'll find useful.
 
 #+BEGIN_SRC lisp
   (defun show-modeline ()
@@ -670,7 +698,7 @@ information we'll find useful.
 
 #+CAPTION: The frame manager.
 #+NAME:   fig:frames
-[[./static/02-frames.webm]]
+[[/static/video/02-frames.webm]]
 
 It is easy to spot that the modeline flickers. This is because we
 first clear the whole line and then we draw on top of it. This is
@@ -678,20 +706,20 @@ something that will be addressed soon.
 
 * Benchmarks and optimizations
 
-To make meaningful optimizations it is important to measure things.
+To make meaningful optimizations, it is important to measure things.
 Otherwise we may spend hours and days on improving a loop performance
-when in fact we are bound by the I/O. We will do some exploratory
+when in fact we are bound by the I/O. We'll do some exploratory
 benchmarks, that is we'll create a metric and try to optimize it. The
 first thing coming to mind is FPS. Then, since we print onto the
-terminal, number of characters written per frame. Finally, two
-compound metrics: average number of writes per single terminal cell
+terminal, the number of characters written per frame. Finally, two
+compound metrics: an average number of writes per single terminal cell
 and the write velocity (total number of characters per second).
 
-We will display all in the modeline. Common Lisp have internal time
-which has usually the unit being 1/1000s. This precision is not good
-enough. For instance if we draw 2000fps the time difference will be
-less than the internal time unit. Instead we'll count number of frames
-which we were able to render during a period of one second. To measure
+We'll display all in the modeline. Common Lisp has internal time,
+which has usually the unit equal to 1/1000s. This precision is not
+good enough. For instance if we draw 2000fps, the time difference will
+be less than the internal time unit. Instead we'll count the number of
+frames which we were able to render during one second. To measure the
 number of characters written we'll add a kludge to the function ~put~:
 each write increases the counter. Escape sequences are also counted.
 
@@ -743,13 +771,13 @@ each write increases the counter. Escape sequences are also counted.
 
 #+CAPTION: Modeline with benchmarks
 #+NAME:   fig:modeline
-[[./static/02-modeline.webm]]
+[[/static/video/02-modeline.webm]]
 
-Current demos are not representative, because they do not fill all
-cells in the terminal. For that we'll use a full screen noise demo and
-turn off the lambda demo. It fills whole terminal except the last row
-where we display the modeline. To reduce the noise (ha ha!), we'll
-skip the window decorations and setting the "activity" color.
+The current demos are not representative, because they do not fill all
+the cells in the terminal. For that we'll use a full screen noise demo
+and turn off the lambda demo. It fills the whole terminal except the
+last row where we display the modeline. To reduce the noise (ha ha!),
+we'll skip the window decorations and changing the output color.
 
 #+BEGIN_SRC lisp
   (defun display-screen (fm)
@@ -791,21 +819,21 @@ skip the window decorations and setting the "activity" color.
           do (show-modeline)))
 #+END_SRC
 
-You may need to type ~C-e~ and restart display from a debugger to
+You may need to type ~C-e~ and restart the display from a debugger to
 restart the ~show-screen~ loop. Now it looks more like it - FPS is
 crap and drops when we grow the terminal and update its dimensions
-with ~C-r~. For 25x80 terminal it is around 23fps with 125 writes per
-single cell and around 5M characters per second.
+with ~C-r~. For the 25x80 terminal it is around 23fps with 125 writes
+per single cell and around 5M characters per second.
 
 #+CAPTION: Counting FPS (full screen)
 #+NAME:   fig:crap-fps
-[[./static/02-crap-fps.webm]]
+[[/static/video/02-crap-fps.webm]]
 
-One obvious optimization is to call ~finish-output~ after each frame
-rendered, not after each sequence put on the terminal. We'll abstract
-flushing the buffer with a generic function ~flush-buffer~ which will
-be a part of the virtual buffer protocol. It will be accompanied with
-the new ~ctl~ operation called ~:fls~.
+One obvious optimization is to call the function ~finish-output~ after
+each frame rendered, not after each sequence put on the
+terminal. We'll abstract flushing the buffer with a generic function
+~flush-buffer~ which will be a part of the virtual buffer protocol. It
+will be accompanied with a new ~ctl~ operation called ~:fls~.
 
 #+BEGIN_SRC lisp
 (defgeneric flush-buffer (buffer &rest args))
@@ -834,7 +862,8 @@ the new ~ctl~ operation called ~:fls~.
 We need to flush the buffer after each iteration of a display loop,
 otherwise we have no guarantees that anything will be displayed.
 Querying the terminal also requires flushing the output if we want to
-receive the response synchronously (like in ~get-cursor-position~).
+receive the response synchronously (like in the function
+~get-cursor-position~).
 
 #+BEGIN_SRC lisp
   ;; terminal.lisp
@@ -867,12 +896,13 @@ receive the response synchronously (like in ~get-cursor-position~).
 #+END_SRC
 
 This small change roughly doubles the performance, and that is very
-nice. For 25x80 terminal it is around 53fps with 125 writes per single
-cell and around 13.5M characters per second.
+nice. For the 25x80 terminal it is around 53fps with 125 writes per
+single cell and around 13.5M characters per second.
 
-Now let's examine our CPU and I/O bounds. First recompile ~out~ and
-~ctl~ macros to do nothing, compile-and-load ~example.lisp~ file and
-refresh the display with ~C-r~. After that probe the fps from a repl.
+Now let's examine the CPU and the I/O bounds. First recompile macros
+~out~ and ~ctl~ to do nothing, compile-and-load the ~example.lisp~
+file and refresh the display with ~C-r~. After that, probe the fps
+from a repl.
 
 #+BEGIN_SRC lisp
 (defmacro out ((&rest args) object))
@@ -907,7 +937,7 @@ Based on the above benchmarks we are clearly bound by the I/O.
 Previous result from the "smoke" benchmark with velocity 13.5M char/s
 may be better because the used terminal emulator processes the escape
 sequences faster (changing the color doesn't require putting anything
-on the screen). ~FPS (i/o)~ column gives us the best score we can
+on the screen). The ~FPS (i/o)~ column gives us the best score we can
 possibly achieve (numbers may vary between software/hardware setups).
 
 Restore macros ~out~ and ~ctl~ as they were and reload the file
@@ -921,12 +951,12 @@ Restore macros ~out~ and ~ctl~ as they were and reload the file
 | 87 x 319  | 27753 |   2 | 3611308 | 130 |  7222616 |
 
 Writing 100+ characters per cell seems pretty excessive. Reducing this
-number will be beneficial. Notice, that we do little too much since
+number will be beneficial. Notice, that we do a little too much since
 we've added the function ~put-cell~. The function sets the terminal
 cursor position and the cell colors, finally it writes the character.
-The macro ~out~ also sets row, column, foreground and background
-colors, and ~:after~ auxiliary methods configure the terminal. In
-other words for each character we:
+The macro ~out~ also sets the row, the column, the foreground and the
+background colors, and ~:after~ auxiliary methods configure the
+terminal. In other words for each character we:
 
 - set the cursor position and colors in ~out~
 - set the cursor position and colors in ~put-cell~
@@ -942,10 +972,10 @@ Recompile the following methods to do nothing and then remove them:
   (defmethod (setf col) :after (col (instance console)))
 #+END_SRC
 
-As expected, number of writes per cell drops threefold. ~WPC~ column
-is now constant (for a full screen applications which write each cell)
-and amounts 40ch/cell. Fix the ~out~ macro so it doesn't change the
-slot in console - it is unnecessary anymore.
+As expected, the number of writes per cell drops threefold. The ~WPC~
+column is now constant (for a full screen applications which writes
+each cell) and amounts 40ch/cell. Fix the macro ~out~ so it doesn't
+change the slot in the console - it is not necessary anymore.
 
 #+BEGIN_SRC lisp
   (defmacro out ((&key row col fgc bgc) object)
@@ -967,8 +997,8 @@ set the cursor position. Same for colors. Even when there is no need
 to send the escape sequence we still do that. We'll maintain a cursor
 state (which will be separate from the "current" console colors).
 Ensuring that the terminal state is adeqate will be the responsibility
-of ~put-cell~.  Let's take one step at a time and move the logic from
-the macro ~out~ to the method ~put-cell~.
+of the function ~put-cell~.  Let's take one step at a time and move
+the logic from the macro ~out~ to the method ~put-cell~.
 
 #+BEGIN_SRC lisp
 (defmacro out ((&key row col fgc bgc) object)
@@ -993,7 +1023,7 @@ the macro ~out~ to the method ~put-cell~.
 The function ~put-cell~ now accepts strings. That is the optimization
 opportunity (our demo application won't benefit much from that because
 each character is drawn separately). Notice that now we do interpret
-the newline character. The way it is handled clearly indicates, that
+the newline character. The way it is handled clearly indicates that
 the concept of a newline belongs to the text layout, not to the text
 itself.
 
@@ -1112,7 +1142,7 @@ use the new class ~cursor~:
     (let ((*console* instance))
       (update-console-dimensions)))
 
-  ;; first compile, then remove
+  ;;; first compile, then remove
   (defmethod (setf cvp) :after (cvp (instance console)))
 
   (defmethod put-cell ((buf console) row col str fgc bgc)
@@ -1156,13 +1186,13 @@ it is time to look at the benchmark data:
 | 87 x 319  | 27753 |   7 | 465000 |  16 |  2800000 |
 
 Things have improved quite a lot. 16 characters per cell is due to a
-random color - it will be less favorable if the output cell will be
-also random (like in the lambda demo).
+random color - it will be less favorable if the output cell will also
+be random (like in the lambda demo).
 
 * Rendering modes
 
 Let's modify the noise demo to accept a sequence of colors from which
-the foreground color is drawed by lot. The class frame will have one
+the foreground color is picked randomly. The class frame will have one
 more slot named "ap" for the frame data.
 
 #+BEGIN_SRC lisp
@@ -1213,41 +1243,43 @@ Now let's bring back decorations and run a few demos:
 #+END_SRC
 
 Uh oh, something interesting is happening. Despite a very high 950fps
-we can see a flicker! Not only that, lambda demo which is drawn last,
-and rightfully should be on top, is obscured by the red noise demo.
+we can see a flicker! Not only that. The lambda demo, which is drawn
+last, and rightfully should be on top, is obscured by the red noise
+demo.
 
 #+CAPTION: Flickering windows
 #+NAME:   fig:flicker
-[[./static/02-flicker.webm]]
+[[/static/video/02-flicker.webm]]
 
 The flicker is because of how we draw things. We put each cell
-immedietely, so first we draw the first window, then on top of it the
-second window and then on top of it the third window. After that we
-repeat the process. That means that if we have two intersecting
-windows, then for part of the time it will have a content of the first
-window and for the rest of a time a content of the second one.
+immedietely on the screen, so first we draw the first window, then on
+top of it the second window and then on top of it the third
+window. After that we repeat the process. This means that if we have
+two intersecting windows, then for part of the time it will have the
+content of the first window and for the rest of a time the content of
+the second one.
 
-The issue with the lambda demo not being on top is slightly different.
-In this demo we draw only one cell per frame, so only one cell may be
-drawn on top of the other window, and then the noise demo redraws a
-full window.
+The issue with the lambda demo not being at the top is slightly
+different.  In this demo we draw only one cell per frame, so only one
+cell may be drawn on top of the other window, and then the noise demo
+redraws a full window.
 
-Another problem which is not visible is a performance penalty. If we
-are bound by I/O, then drawing multiple times the same cell is very
-suboptimal. Ideally we'd modify each cell only once per frame.
+Another problem which is not visible is the performance penalty. If we
+are bound by the I/O, then drawing the same cell multiple times is
+very suboptimal. Ideally we'd modify each cell only once per frame.
 
 We'll call the currently exhibited behavior a "direct rendering". Time
 to introduce a second mode, which we'll call an "indirect rendering".
 The idea is to buffer the data in an array and when we flush the
-virtual buffer to redraw damaged parts of a terminal.
+virtual buffer in order to redraw the damaged parts of a terminal.
 
-Direct rendering is useful in some applications, so we'll retain this
-functionality and allow switching rendering mode for each buffer with
-the ~ctl~ interface. Three modes will be defined: a direct rendering,
-an indirect rendering and a write-through rendering. The last one will
-combine the two: it will put the cell on the screen immedietely but it
-will also save its content in a buffer. We'll add three new functions
-to the virtual buffer protocol.
+A direct rendering is useful in some applications, so we'll retain
+this functionality and allow switching rendering mode for each buffer
+with the ~ctl~ interface. Three modes will be defined: a direct
+rendering, an indirect rendering and a write-through rendering. The
+last one will combine the two: it will put the cell on the screen
+immedietely but it will also save its content in a buffer. We'll add
+three new functions to the virtual buffer protocol.
 
 #+BEGIN_SRC lisp
   (defgeneric set-cell (buffer row col str fg bg))
@@ -1257,10 +1289,10 @@ to the virtual buffer protocol.
 #+END_SRC
 
 The function ~set-cell~ is responsible for "doing the right thing",
-that is either putting it directly on a screen or saving it in the
-internal array (or both). The accessor ~rnd~ is used to read and write
-the buffer rendering mode. The macro ~out~ calls now the function
-~set-cell~ and the macro ~ctl~ has a new option ~:rnd~.
+that is either putting the content directly on a screen or saving it
+in the internal array (or both). The accessor ~rnd~ is used to read
+and write the buffer rendering mode. The macro ~out~ calls now the
+function ~set-cell~ and the macro ~ctl~ has a new option ~:rnd~.
 
 #+BEGIN_SRC lisp
   (defmacro out ((&key row col fgc bgc) object)
@@ -1285,8 +1317,8 @@ the buffer rendering mode. The macro ~out~ calls now the function
 We'll optimize the rendering by tracking dirty cells. If the cell is
 not "dirty", then there is no need to put it on the terminal (that
 applies only to the indirect rendering mode). Cells will be stored in
-the array stored in a buffer's slot ~data~. We'll also add a slot for
-the rendering mode.
+the array stored in a slot in the buffer, named ~data~. We'll also add
+a slot for the rendering mode.
 
 #+BEGIN_SRC lisp
   (defclass cell ()
@@ -1319,7 +1351,7 @@ the rendering mode.
 #+END_SRC
 
 Accessing the cell will be abstracted away with a function ~get-cell~.
-The function translates the terminal index (starting with [1, 1]) to
+The function translates the terminal index (starting from [1, 1]) to
 the array index. If the element is outside of the array, it will
 return a "dummy" cell, otherwise it will return the array element.
 Array elements are lazily initialized when accessed. Function will
@@ -1337,8 +1369,8 @@ always return an object of the class ~cell~.
            (make-instance 'cell :ch #\space :fg #xffffff00 :bg #x00000000)))))
 #+END_SRC
 
-The array with data has initially dimensions ~(0 0), so we need to
-update them when the console dimensions change.
+The array with data initially has dimensions ~(0 0)~, so we need to
+update the array dimensions when the console dimensions change.
 
 #+BEGIN_SRC lisp
 (defun update-console-dimensions ()
@@ -1356,10 +1388,10 @@ update them when the console dimensions change.
 
 Functions ~put-cell~ and ~set-cell~ both work on strings. To abstract
 the iteration away we'll introduce the macro ~iterate-cells~. This
-function is responsible for updating the row and the column variables
+operator is responsible for updating the row and the column variables
 when iterating over the string, so they indicate the correct cell.
-Function "wraps", that if we go beyond the last row, we'll start from
-the first row (similarily for columns).
+The operator "wraps", so that if we go beyond the last row, we'll
+start from the first row (similarily for columns).
 
 #+BEGIN_SRC lisp
   (defmacro iterate-cells ((ch crow ccol wrap)
@@ -1407,9 +1439,9 @@ the first row (similarily for columns).
         (update-cursor-position cur final-row final-col))))
 #+END_SRC
 
-Finally the function ~set-cell~ will trace the cell state and modify
-its cached. When a cell is dirty it means that it should be redrawn
-when flushing the buffer in the indirect rendering mode.
+Finally, the function ~set-cell~ will trace the cell state and modify
+its cached state. When a cell is dirty it means that it should be
+redrawn when flushing the buffer in the indirect rendering mode.
 
 #+BEGIN_SRC lisp
   (defmethod set-cell ((buf buffer) row col str fgc bgc)
@@ -1496,18 +1528,19 @@ unless we wrap over the right edge.
 
 #+CAPTION: Buffered frames
 #+NAME:   fig:buffering
-[[./static/02-buffering.webm]]
+[[/static/video/02-buffering.webm]]
 
 * Surfaces
 
 We have two problems with the lambda application: the demo can't be
-moved (because it starts drawing from ~[1,1]~) and that it is obscured
-by a noise demo frame due to infrequent writes. We will now detach the
-notion of the application buffer and the console buffer. Our job would
-be much easier if we had [[https://turtleware.eu/posts/Conformal-array-displacement.html][conformally displaced arrays]] at our disposal
-- a multi-dimensional fill pointer and displacement offset would allow
-us to map coordinates transparently. That said we can easily abstract
-all that away, because we do not expose naked arrays in the API.
+moved (because it starts drawing from the cell ~[1,1]~) and that it is
+obscured by a noise demo frame due to its infrequent writes. We'll now
+detach the notion of the application buffer and the console
+buffer. Our job would be much easier if we had [[https://turtleware.eu/posts/Conformal-array-displacement.html][conformally displaced
+arrays]] at our disposal - a multi-dimensional fill pointer and the
+displacement offset would allow us to map coordinates transparently.
+That said we can easily abstract all that away, because we do not
+expose naked arrays in the API.
 
 To make the issue more apparent we'll move the lambda demo and make
 its window smaller than the actual output.
@@ -1522,16 +1555,16 @@ its window smaller than the actual output.
 
 #+CAPTION: Lambda problems
 #+NAME: fig:no-surface
-[[./static/02-no-surface.webm]]
+[[/static/video/02-no-surface.webm]]
 
-Each application will be rendered on a "surface", that is a virtual
-buffer which is displaced onto the console. Surface's internal buffer
-starts from coordinates ~[1,1]~ like the console, and then when we
-call ~put-cell~, the coordinates are transformed, and ~set-cell~ is
-called on the console. The way surfaces are defined means that they
-may be stacked (that is the external buffer of a surface may be a
-virtual buffer which is another surface or something else). Add a new
-file ~surface.lisp~ to the project.
+Each application will be rendered on a "surface", that is on a virtual
+buffer which is displaced onto the console. The internal buffer of a
+surface starts from coordinates ~[1,1]~ like the console, and then
+when we call the function ~put-cell~, the coordinates are transformed,
+and the function ~set-cell~ is called on the console. The way surfaces
+are defined means that they may be stacked (that is the external
+buffer of a surface may be a virtual buffer which is another
+surface). Add a new file ~surface.lisp~ to the project.
 
 #+BEGIN_SRC lisp
   (defclass surface (buffer bbox)
@@ -1596,10 +1629,11 @@ we need to flush afterwards.
 #+END_SRC
 
 Finally both demos need to supply their number of rows, columns and
-they always render starting from ~[1,1]~. The function ~lambda-demo~
-doesn't need changes, but the function ~noise-demo~ does, because it
-started drawing from ~(r1 frame)~. Lambda demo size is known while for
-the noise demo it is inferred from the surface displacement.
+they always render starting from the cell ~[1,1]~. The function
+~lambda-demo~ doesn't need changes, but the function ~noise-demo~
+does, because it started drawing from the frame position offset.  The
+size of the lambda demo is known, while for the noise demo it is
+inferred from the surface displacement.
 
 #+BEGIN_SRC lisp
   (defun noise-demo (frame)
@@ -1624,15 +1658,15 @@ the noise demo it is inferred from the surface displacement.
       frame))
 #+END_SRC
 
-Lambda is now properly offset, but the noise demo is still
+The lambda sign is now properly offset, but the noise demo is still
 overexposed.
 
 #+CAPTION: Lambda problems
 #+NAME: fig:surface
-[[./static/02-surface.webm]]
+[[/static/video/02-surface.webm]]
 
 We may easily address that by forcing all cells to be flushed. Later
-on we will tackle this problem from a different angle.
+on we'll tackle this problem from a different angle.
 
 #+BEGIN_SRC lisp
   (defun render-application (fm frame)
@@ -1644,14 +1678,14 @@ on we will tackle this problem from a different angle.
 
 #+CAPTION: Lambda problems
 #+NAME: fig:surface
-[[./static/02-surface-flush.webm]]
+[[/static/video/02-surface-flush.webm]]
 
-The last missing functionality is scrolling. The lambda demo does not
-fit in its window. We'll introduce two slots in the ~surface~ which
-will represent the offset for the top-left corner of the buffer. For
-instance when the offset row is 3, then the third row of the buffer
-will be shown as the first row in the window. We only need to modify
-the function ~put-cell~ to account for that.
+The last missing functionality is the scrolling. The lambda demo does
+not fit in its window. We'll introduce two slots in the class
+~surface~ which will represent the offset for the top-left corner of
+the buffer. For instance when the offset row is 3, then the third row
+of the buffer will be shown as the first row in the window. We only
+need to modify the function ~put-cell~ to account for that.
 
 #+BEGIN_SRC lisp
   (defclass surface (buffer bbox)
@@ -1703,11 +1737,11 @@ This is something to be used by API clients, so operations ~mov~ and
                            (:fls `(flush-buffer buf ,@args)))))))
 #+END_SRC
 
-We'll add now new key bindings in ~handle-event~ to scroll and move
-the window. This way we will gain some intuition of how it should
-work. When rendering decorations we will indicate that some of the
-output is not visible by the character ~#\&~. To avoid glitches we
-will also clear a whole screen in the function ~display-screen~ and
+We'll now add new key bindings in the function ~handle-event~ to
+scroll and move the window. This way we'll gain some intuition of how
+it should work. When rendering decorations we'll use the character
+~#\&~ to indicate that some output is not visible. To avoid glitches
+we'll also clear the whole screen in the function ~display-screen~ and
 clear the window background in ~render-decorations~.
 
 #+BEGIN_SRC lisp
@@ -1799,22 +1833,23 @@ done with arrows, and moving the window is done with ~C-arrow~.
 
 #+CAPTION: Scrolling and moving windows
 #+NAME:   fig:surface-scroll
-[[./static/02-surface-scroll.webm]]
+[[/static/video/02-surface-scroll.webm]]
 
-While experimenting with the window you may notice some inconsistency:
-scrolling moves the content in the opposite direction than moving the
-window (if we use the same arrow key). This discrepancy may be
-described with an analogy of a cursor: when you scroll right, you move
-an invisible cursor beyond the right edge, so the content is moved
-left to reveal what is under the "cursor". Alternative strategy, where
-pressing "right" moves the content to the right, could be described in
-terms of a touchscreen: you hold part of the screen and move it to the
-right, so the content moves along your finger. To signify a difference
-we'll talk about the "cursor scrolling" and the "finger scrolling".
+While experimenting with the window, you may notice some
+inconsistency: scrolling moves the content in the opposite direction
+than moving the window (if we use the same arrow key). This
+discrepancy may be described with an analogy of a cursor: when you
+scroll right, you move an invisible cursor beyond the right edge, so
+the content is moved left to reveal what is under the "cursor". The
+alternative strategy, where pressing "right" moves the content to the
+right, could be described in terms of a touchscreen: you hold part of
+the screen and move it to the right, so the content moves along your
+finger. To signify a difference we'll talk about the "cursor
+scrolling" and the "finger scrolling".
 
-The last step is to ensure, that we don't scroll too much. Content
+The last step is to ensure that we don't scroll too much. The content
 scrolling should stop if we reach the maximum. What is considered the
-maximum depends on whether the window is bigger or smaller then the
+maximum depends on whether the window is bigger or smaller than the
 buffer. Consider two cases when cursor-scrolling down:
 
 - the window is smaller than the content :: the scrolling stops when
@@ -1835,13 +1870,13 @@ Let's add two lambda demos to illustrate the difference:
 
 #+CAPTION: Scrolling boundaries
 #+NAME:   fig:scroll-bound
-[[./static/02-scroll-bound.webm]]
+[[/static/video/02-scroll-bound.webm]]
 
-Functions ~move-to-row~ and ~move-to-col~ take the absolute argument
+Functions ~move-to-row~ and ~move-to-col~ take the absolute argument,
 and if scrolling the window violates the constraint, it returns
 ~nil~. In that case we move a maximum quantity in the scroll direction
-we can (so when we for instance cursor-scroll 1000 to the left and the
-line has only 100 characters, we'll end at the line beginning).
+(so when we for instance cursor-scroll 1000 to the left and the line
+has only 100 characters, we'll end at the line beginning).
 
 #+BEGIN_SRC lisp
   (defun move-to-row (buf row0)
@@ -1889,8 +1924,8 @@ line has only 100 characters, we'll end at the line beginning).
 #+END_SRC
 
 Multiple surfaces may be attached to the same virtual buffer data
-array. It is a matter of specifying correct initargs. We'll add a hack
-because our frame manager currently assumes that the surface is a
+array. It is a matter of specifying the correct initargs. We'll add a
+hack because our frame manager currently assumes that the surface is a
 frame and thus has a method ~fn~ returning the display function.
 
 #+BEGIN_SRC lisp
@@ -1913,9 +1948,9 @@ frame and thus has a method ~fn~ returning the display function.
 
 * Retained display mode
 
-Let's introduce a few more examples to have a few specimen we could
+Let's introduce a few more examples to have more specimen we could
 talk about. The animation demo shows a square which bounces from the
-left to the right edge, and the report demo shows lines of text.
+left to the right edge, and the report demo shows lines of the text.
 
 #+BEGIN_SRC lisp
   (defun ensure-demos (fm)
@@ -1999,13 +2034,14 @@ left to the right edge, and the report demo shows lines of text.
 
 #+CAPTION: New demos
 #+NAME:   fig:new-demos
-[[./static/02-all-demos.webm]]
+[[/static/video/02-all-demos.webm]]
 
-When we look at these demos we can recognize, that each uses the
-buffer differently. The old demos "lambda" and "noise" outputs change
+When we look at these demos we can recognize that each one uses the
+buffer differently. The old demos "lambda" and "noise" output change
 synchronously when a new frame is drawn. The new demos change based on
-asynchronous events - for the "animation" demo that is a time slice,
-for the "report" demo it is (hypothetically) a buffer contents change.
+the asynchronous events - for the "animation" demo that is a time
+slice, for the "report" demo it is (hypothetically) a buffer contents
+change.
 
 | demo      | display     | change source |
 |-----------+-------------+---------------|
@@ -2021,38 +2057,41 @@ immediate display, as opposed to a retained display where the buffer
 is not constantly filled with a new content.
 
 A difference between the display and the repaint is not apparent. In
-term of buffers it could be explained like this:
+terms of our buffers it could be explained like this:
 
-- displaying :: drawing on the buffer in ~:buf~ mode
+- displaying :: drawing on the buffer in the ~:buf~ mode
 - repainting :: flushing the buffer
 
 The immediate rendering mode coalasces both concepts into one, so it
 could be described as drawing on the buffer in the ~:dir~ mode, or
 redisplaing it before each repaint.
 
-In the retained rendering mode the separation of concepts is
+In the retained rendering mode, the separation of these concepts is
 important. Displaying the content once may save some time (i.e in the
 report demo we don't need to reprint the same buffer over and over
-again in each frame).
+again for each render).
 
 Moreover, at this point we may talk about display lists, that is lists
-of full blown objects which have their own repaint methods. In CLIM a
-display list is called the ~output-record-history~, and elements of
-said list are ~output-records~. Compound output records may contain
-more (inner) output records so objects in such display list form a
-tree with z-ordering.
+of objects which have their own repaint methods. In CLIM a display
+list is called the ~output-record-history~, and an element of said
+list are called the ~output-record~. Compound output records may
+contain more (inner) output records, so objects in such display list
+form a tree with z-ordering.
 
-We will explore the topic of retained display and display lists
-further in another post which will introduce yet another layer of
-abstraction.
+We'll explore the topic of retained display and display lists further
+in another post which will introduce yet another layer of abstraction.
 
 * Conclusions
 
 I hope you've liked this post as much as I've enjoyed working on it.
-It has grown considerably longer than I have anticipated, so I've
+It has grown considerably longer than I had anticipated, so I've
 decided to postpone the discussion of display lists and damage regions
-for later time. The next post in this serie will cover input
+for a later time. The next post in this series will cover the input
 processing.
 
+I'd like to thank Robert Strandh for offering the help and
+proofreading this text. All remaining mistakes are mine. Please don't
+hesitate to contact me with questions and remarks.
+
 If you like this kind of work, you may [[https://www.youtube.com/watch?v=RziVt_1Ac7g][toss a coin to your Lisper]] by
-[[https://turtleware.eu/donate.html][supporting]] me financially.
+making a [[https://turtleware.eu/donate.html][donation]].
