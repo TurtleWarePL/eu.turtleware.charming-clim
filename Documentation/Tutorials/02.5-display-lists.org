@@ -1,29 +1,17 @@
-(defpackage #:charming-clim-system
-  (:use #:asdf #:cl)
-  (:export #:cfile))
-(in-package #:charming-clim-system)
+#+title: Charming CLIM tutorial part 2.5 – Retained display
+#+author: Daniel 'jackdaniel' Kochmański
+#+email: daniel@turtleware.eu
+#+hugo_base_dir: ~/hugo/
 
-(defclass cfile (c-source-file) ())
+The previous issue was quite long, so I've decided to write a separate post
+about the retained display. We'll also use this opportunity to refactor the
+project and put different abstractions in separate directories:
 
-(defmethod output-files ((o compile-op) (c cfile))
-  (list (make-pathname :name (component-name c) :type "so")))
+- level 0 :: raw terminal access
+- level 1 :: console and surfaces
+- level 2 :: display lists and frame manager
 
-(defmethod perform ((o compile-op) (c cfile))
-  (let ((in  (first (input-files o c)))
-        (out (first (output-files o c))))
-    (uiop:run-program (format nil "cc -shared ~a -o ~a" in out))))
-
-(defmethod perform ((o load-op) (c cfile))
-  (let ((in (first (input-files o c))))
-    (uiop:call-function "cffi:load-foreign-library" in)))
-
-(defmethod operation-done-p ((o compile-op) (c cfile))
-  (let ((in  (first (input-files o c)))
-        (out (first (output-files o c))))
-    (and (probe-file in)
-         (probe-file out)
-         (> (file-write-date out) (file-write-date in)))))
-
+#+BEGIN_SRC lisp
 (defsystem "eu.turtleware.charming-clim"
   :defsystem-depends-on (#:cffi)
   :depends-on (#:alexandria #:cffi #:swank)
@@ -43,3 +31,6 @@
                 :depends-on ("packages" "l0" "l1")
                 :components ((:file "display-lists")
                              (:file "frame-manager" :depends-on ("display-lists"))))))
+#+END_SRC
+
+For now files defined in the module ~l2~ are empty.
