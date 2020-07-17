@@ -147,18 +147,18 @@ us another change of a data representation format.
 
 #+BEGIN_SRC lisp
   (defun set-foreground-color (color)
-    (let ((r (ldb '(8 . 24) color))
-          (g (ldb '(8 . 16) color))
-          (b (ldb '(8 .  8) color))
-          (a (ldb '(8 .  0) color)))
+    (let ((r (ldb (byte 8 24) color))
+          (g (ldb (byte 8 16) color))
+          (b (ldb (byte 8  8) color))
+          (a (ldb (byte 8  0) color)))
       (declare (ignore a))
       (sgr "38;2;" r ";" g ";" b)))
 
   (defun set-background-color (color)
-    (let ((r (ldb '(8 . 24) color))
-          (g (ldb '(8 . 16) color))
-          (b (ldb '(8 .  8) color))
-          (a (ldb '(8 .  0) color)))
+    (let ((r (ldb (byte 8 24) color))
+          (g (ldb (byte 8 16) color))
+          (b (ldb (byte 8  8) color))
+          (a (ldb (byte 8  0) color)))
       (declare (ignore a))
       (sgr "48;2;" r ";" g ";" b)))
 #+END_SRC
@@ -358,7 +358,7 @@ so ~put-cell~ prints a warning.
                        :fn (constantly t)))
 
   (defclass buffer ()
-    ((fgc :initarg :fgc :accessor fgc :documentation "Foregorund color")
+    ((fgc :initarg :fgc :accessor fgc :documentation "Foreground color")
      (bgc :initarg :bgc :accessor bgc :documentation "Background color")
      (row :initarg :row :accessor row :documentation "Current row")
      (col :initarg :col :accessor col :documentation "Current col")
