@@ -2071,12 +2071,11 @@ important. Displaying the content once may save some time (i.e in the
 report demo we don't need to reprint the same buffer over and over
 again for each render).
 
-Moreover, at this point we may talk about display lists, that is lists
-of objects which have their own repaint methods. In CLIM a display
-list is called the ~output-record-history~, and an element of said
-list are called the ~output-record~. Compound output records may
-contain more (inner) output records, so objects in such display list
-form a tree with z-ordering.
+Moreover, at this point we may talk about display lists, that is lists of
+objects which have their own repaint methods. In CLIM a display list is called
+the ~output-record-history~, and each element of this list is called the
+~output-record~. Compound output records may contain more (inner) output
+records, so objects in such display list form a tree with z-ordering.
 
 We'll explore the topic of retained display and display lists further
 in another post which will introduce yet another layer of abstraction.

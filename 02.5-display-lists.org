@@ -1,3 +1,27 @@
+#+title: Charming CLIM tutorial part 2.5 – Retained display
+#+author: Daniel 'jackdaniel' Kochmański
+#+email: daniel@turtleware.eu
+#+hugo_base_dir: ~/hugo/
+
+The previous issue was quite long, so I've decided to leave this part out of
+it. We'll add a new abstraction level which implements display lists and adds
+a protocol built on top of the virtual buffers and the ~ctl~ interface. Our
+starting point is the source code archive which contains recent changes.
+
+* The virtual buffer refactor
+
+We've introdcued two protocols which are not common to all subclasses of
+virtual buffers. The first one are the ~bbox~ class accessors ~r1~, ~c1~, ~r2~
+and ~c2~ which are meant to return the bounding rectangle of a buffer. The
+second one the ~surface~ class accessors ~sink~, ~row0~ and ~col0~ and the
+functions ~scroll-buffer~ and ~move-buffer~.  The function ~flush-buffer~
+always flushes whole buffer, so we'll change it to be able to update only
+relevant rectangle.
+
+
+* Display protocol
+
+Add a new package to the system definition.
 
 #+BEGIN_SRC lisp
   (defpackage #:eu.turtleware.charming-clim/l2
