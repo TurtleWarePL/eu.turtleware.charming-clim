@@ -25,6 +25,9 @@
          (> (file-write-date out) (file-write-date in)))))
 
 (defsystem "eu.turtleware.charming-clim"
+  :description "Terminal manipulation library"
+  :author "Daniel 'jackdaniel' Kochmański"
+  :license "LGPL-2.1+"
   :defsystem-depends-on (#:cffi)
   :depends-on (#:alexandria #:cffi #:swank)
   :pathname "Sources"
