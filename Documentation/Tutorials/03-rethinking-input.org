@@ -1,0 +1,87 @@
+#+title: Charming CLIM tutorial part 3 – Rethinking the Input
+#+author: Daniel 'jackdaniel' Kochmański
+#+email: daniel@turtleware.eu
+
+* Restructuring the project
+
+Currently we have two abstraction levels:
+
+- level 0 :: raw terminal access
+- level 1 :: console and surfaces
+
+The new system definition reflects this structure:
+
+#+BEGIN_SRC lisp
+(defsystem "eu.turtleware.charming-clim"
+  :defsystem-depends-on (#:cffi)
+  :depends-on (#:alexandria #:cffi #:swank)
+  :pathname "Sources"
+  :components ((:file "packages")
+               (:module "l0"
+                :depends-on ("packages")
+                :components ((:cfile "raw-mode")
+                             (:file "terminal" :depends-on ("raw-mode"))))
+               (:module "l1"
+                :depends-on ("packages" "l0")
+                :components ((:file "cursor")
+                             (:file "output")
+                             (:file "surface" :depends-on ("output"))
+                             (:file "console" :depends-on ("cursor" "output"))))
+               (:module "l2"
+                :depends-on ("packages" "l0" "l1")
+                :components ((:file "display-lists")
+                             (:file "frame-manager" :depends-on ("display-lists"))))))
+#+END_SRC
+
+For now files defined the module ~l2~ are empty. That will be our starting
+point. We'll rename the API packages to match this change:
+
+#+BEGIN_SRC lisp
+(defpackage #:eu.turtleware.charming-clim/l0
+  (:export #:init-terminal
+           #:close-terminal
+           #:*terminal*
+
+           #:put #:esc #:csi #:sgr
+           #:read-input #:keyp
+
+           #:reset-terminal
+           #:clear-terminal
+
+           #:clear-line
+           #:set-foreground-color
+           #:set-background-color
+
+           #:with-cursor-position
+           #:set-cursor-position
+           #:save-cursor-position
+           #:restore-cursor-position
+           #:request-cursor-position
+
+           #:cursor-up
+           #:cursor-down
+           #:cursor-right
+           #:cursor-left
+
+           #:set-cursor-visibility
+           #:set-mouse-tracking))
+
+(defpackage #:eu.turtleware.charming-clim/l1
+  (:export #:with-console #:out #:ctl))
+
+(defpackage #:eu.turtleware.charming-clim/l2
+  (:export))
+
+(defpackage #:eu.turtleware.charming-clim
+  (:use #:common-lisp
+        #:eu.turtleware.charming-clim/l0
+        #:eu.turtleware.charming-clim/l1
+        #:eu.turtleware.charming-clim/l2))
+#+END_SRC
+
+You may clone the library with this command:
+
+#+BEGIN_SRC shell
+  git clone --branch v0.2 git@github.com:TurtleWarePL/eu.turtleware.charming-clim.git
+#+END_SRC
+

@@ -1,4 +1,4 @@
-(defpackage #:eu.turtleware.charming-clim/ll
+(defpackage #:eu.turtleware.charming-clim/l0
   (:export #:init-terminal
            #:close-terminal
            #:*terminal*
@@ -27,10 +27,14 @@
            #:set-cursor-visibility
            #:set-mouse-tracking))
 
-(defpackage #:eu.turtleware.charming-clim/hl
+(defpackage #:eu.turtleware.charming-clim/l1
   (:export #:with-console #:out #:ctl))
+
+(defpackage #:eu.turtleware.charming-clim/l2
+  (:export))
 
 (defpackage #:eu.turtleware.charming-clim
   (:use #:common-lisp
-        #:eu.turtleware.charming-clim/ll
-        #:eu.turtleware.charming-clim/hl))
+        #:eu.turtleware.charming-clim/l0
+        #:eu.turtleware.charming-clim/l1
+        #:eu.turtleware.charming-clim/l2))
