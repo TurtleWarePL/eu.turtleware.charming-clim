@@ -46,3 +46,9 @@
                 :depends-on ("packages" "l0" "l1")
                 :components ((:file "display-lists")
                              (:file "frame-manager" :depends-on ("display-lists"))))))
+
+(defsystem "eu.turtleware.charming-clim/demo"
+  :license "BSD-2-Clause"
+  :depends-on ("eu.turtleware.charming-clim")
+  :pathname "Auxiliary"
+  :components ((:file "example")))
