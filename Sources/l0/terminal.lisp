@@ -129,6 +129,37 @@
   (csi 6 "n"))
 
 
+;;; Input
+
+(defclass event () ())
+
+(defclass terminal-event (event) ())
+
+(defclass unknown-terminal-event (terminal-event)
+  ((seq :initarg :seq :accessor seq)))
+
+(defclass cursor-position-event (terminal-event)
+  ((row :initarg :row :accessor row)
+   (col :initarg :col :accessor col)))
+
+(defclass keyboard-event (event)
+  ((key :initarg :key :accessor key)
+   (kch :initarg :kch :accessor kch)
+   (mods :initarg :mods :accessor mods))
+  (:default-initargs :mods 0 :kch nil))
+
+(defclass pointer-event (event)
+  ((row :initarg :row :accessor row)
+   (col :initarg :col :accessor col)
+   (btn :initarg :btn :accessor btn)
+   (mods :initarg :mods :accessor mods)
+   (state :initarg :state :accessor state))
+  (:default-initargs :mods 0))
+
+(defclass pointer-motion-event  (pointer-event) ())
+(defclass pointer-press-event   (pointer-event) ())
+(defclass pointer-release-event (pointer-event) ())
+
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defconstant  +c1-mod+   16)
   (defconstant  +meta-mod+  8)
@@ -137,29 +168,37 @@
   (defconstant  +alt-mod*+  2)
   (defconstant  +shift-mod+ 1))
 
+(defun decode-mods (mods)
+  (loop for p in (list +c1-mod+
+                       +meta-mod+
+                       +ctrl-mod+
+                       +alt-mod*+
+                       +shift-mod+)
+        for k in '(:c1 :meta :ctrl :alt :shift)
+        unless (zerop (logand mods p))
+          collect k))
+
 (defun set-alt-is-meta (bool)
   (if bool
       (setf +alt-mod+ +meta-mod+)
       (setf +alt-mod+ +alt-mod*+)))
 
-(defclass gesture ()
-  ((key  :initarg :key  :accessor gesture-key)
-   (mods :initarg :mods :accessor gesture-mods)))
+(defmethod print-object ((o pointer-event) s)
+  (print-unreadable-object (o s :type t :identity nil)
+    (format s "~s ~s [~s] [~s]" (row o) (col o) (btn o)
+            (decode-mods (mods o)))))
 
-(defmethod print-object ((o gesture) s)
-  (print-unreadable-object (o s :type nil :identity nil)
-    (let ((key (gesture-key o))
-          (mods (gesture-mods o)))
-      (format s "~s ~s"
-              key
-              (loop for p in (list +c1-mod+
-                                   +meta-mod+
-                                   +ctrl-mod+
-                                   +alt-mod*+
-                                   +shift-mod+)
-                    for k in '(:C1 :Meta :Ctrl :Alt :Shift)
-                    unless (zerop (logand mods p))
-                      collect k)))))
+(defmethod print-object ((o keyboard-event) s)
+  (print-unreadable-object (o s :type t :identity nil)
+    (format s "~a [~s]" (key o) (decode-mods (mods o)))))
+
+(defmethod print-object ((o cursor-position-event) s)
+  (print-unreadable-object (o s :type t :identity nil)
+    (format s "~s ~s" (row o) (col o))))
+
+(defmethod print-object ((o unknown-terminal-event) s)
+  (print-unreadable-object (o s :type t :identity nil)
+    (format s "~s" (seq o))))
 
 (defun control-char-p (ch &aux (code (char-code ch)))
   (or (<= 0 code 31)
@@ -167,15 +206,15 @@
 
 (defun controlp (ch &aux (code (char-code ch)))
   "Predicate determining if the character is a control character.
-Returns a generalized boolean (when true returns a gesture)."
+Returns a generalized boolean (when true returns an event)."
   (cond ((<= 0 code 31)
-         (make-instance 'gesture
-                        :mods +ctrl-mod+
-                        :key (code-char (+ code 64))))
+         (make-instance 'keyboard-event
+                        :key (code-char (+ code 64))
+                        :mods +ctrl-mod+))
         ((<= 128 code 159)
-         (make-instance 'gesture
-                        :mods +c1-mod+
-                        :key (code-char (- code 64))))))
+         (make-instance 'keyboard-event
+                        :key (code-char (- code 64))
+                        :mods +c1-mod+))))
 
 (defvar *key-resolvers* (make-hash-table))
 
@@ -190,9 +229,9 @@ Returns a generalized boolean (when true returns a gesture)."
 (defun maybe-combo (key num2)
   (alexandria:if-let ((ctrl (and (characterp key) (controlp key))))
     (prog1 ctrl
-      (setf (gesture-mods ctrl) (logior (1- num2) +ctrl-mod+)))
+      (setf (mods ctrl) (logior (1- num2) +ctrl-mod+)))
     (or (and (= num2 1) key)
-        (make-instance 'gesture :key key :mods (1- num2)))))
+        (make-instance 'keyboard-event :key key :mods (1- num2)))))
 
 (define-key-resolver #\[ #\~ (num1 num2)
   (let ((key (case num1
@@ -221,9 +260,7 @@ Returns a generalized boolean (when true returns a gesture)."
 
 (define-key-resolver #\[ #\R (row col)
   (signal 'cursor-position-report :row row :col col)
-  (make-instance 'gesture
-                 :key (format nil "Cursor position: ~s ~s" row col)
-                 :mods 0))
+  (make-instance 'cursor-position-event :row row :col col))
 
 (defun resolve-key (group num1 num2 |Hasta la vista, baby|)
   (if (null |Hasta la vista, baby|)
@@ -238,23 +275,23 @@ Returns a generalized boolean (when true returns a gesture)."
       (funcall (gethash (+ (char-code |Hasta la vista, baby|)
                            (ash (char-code group) 8))
                         *key-resolvers*
-                        #'(lambda (num1 num2)
-                            (let ((k (format nil
-                                             "Unknown sequence: ESC ~c ~d ~d ~c"
-                                             group num1 num2
-                                             |Hasta la vista, baby|)))
-                              (make-instance 'gesture :key k :mods 0))))
+                        (lambda (num1 num2)
+                          (make-instance 'unknown-terminal-event
+                                         :seq (list +escape+
+                                                    group
+                                                    num1 num2
+                                                    |Hasta la vista, baby|))))
                num1 num2)))
 
 (defun resolve-mouse (btn col row |Hasta la vista, baby|)
-  (let ((state (cond ((not (zerop (ldb (cons 1 5) btn))) :motion)
+  (let ((state (cond ((not (zerop (ldb (byte 1 5) btn))) :motion)
                      ((char= #\M |Hasta la vista, baby|) :press)
                      ((char= #\m |Hasta la vista, baby|) :release)))
-        (mods (+ (if (zerop (ldb (cons 1 2) btn)) 0 +shift-mod+)
-                 (if (zerop (ldb (cons 1 3) btn)) 0 +alt-mod+)
-                 (if (zerop (ldb (cons 1 4) btn)) 0 +ctrl-mod+)))
-        (key (case (+ (ldb (cons 2 0) btn)
-                      (ash (ldb (cons 2 6) btn) 2))
+        (mods (+ (if (zerop (ldb (byte 1 2) btn)) 0 +shift-mod+)
+                 (if (zerop (ldb (byte 1 3) btn)) 0 +alt-mod+)
+                 (if (zerop (ldb (byte 1 4) btn)) 0 +ctrl-mod+)))
+        (btn (case (+ (ldb (byte 2 0) btn)
+                      (ash (ldb (byte 2 6) btn) 2))
                (#b0000 :left)
                (#b0001 :middle)
                (#b0010 :right)
@@ -269,10 +306,11 @@ Returns a generalized boolean (when true returns a gesture)."
                (#b1001 :extra-2)
                (#b1010 :extra-3)
                (#b1011 :extra-4))))
-    (make-instance 'gesture
-                   :key (format nil "row: ~2d col: ~2d [~a ~a] ~a"
-                                row col key btn state)
-                   :mods mods)))
+    (make-instance (ecase state
+                     (:motion 'pointer-motion-event)
+                     (:press 'pointer-press-event)
+                     (:release 'pointer-release-event))
+                   :row row :col col :btn btn :mods mods :state state)))
 
 (defun parse-escape-sequence (&aux char)
   (flet ((read-num ()
@@ -313,24 +351,25 @@ Returns a generalized boolean (when true returns a gesture)."
 
 (defun read-input (&aux (ch (read-char-no-hang *terminal*)))
   ;; READ-CHAR may read more than one byte and return an alphanumeric
-  ;; character. That's fine because we will return it as-is then.
-  (cond ((or (null ch) (graphic-char-p ch))
-         (return-from read-input ch))
+  ;; character.
+  (cond ((null ch)
+         (return-from read-input))
+        ((graphic-char-p ch)
+         (return-from read-input
+           (make-instance 'keyboard-event :kch ch :key ch :mods 0)))
         ((deletep ch))
         ((escapep ch))
         ((controlp ch))
-        (t (error "Unknown input sequence, char code 0x~x~%." (char-code ch)))))
+        (t (make-instance 'unknown-terminal-event :seq (list ch)))))
 
 (defun keyp (ch key &rest mods)
-  (if (null mods)
-      (eql ch key)
-      (and (typep ch 'gesture)
-           (eql (gesture-key ch) key)
-           (eql (gesture-mods ch)
-                (loop for m in mods
-                      summing (ecase m
-                                (:c1 +c1-mod+)
-                                (:m  +meta-mod+)
-                                (:c  +ctrl-mod+)
-                                (:a  +alt-mod*+)
-                                (:s  +shift-mod+)))))))
+  (and (typep ch 'keyboard-event)
+       (eql (key ch) key)
+       (eql (mods ch)
+            (loop for m in mods
+                  summing (ecase m
+                            (:c1 +c1-mod+)
+                            (:m  +meta-mod+)
+                            (:c  +ctrl-mod+)
+                            (:a  +alt-mod*+)
+                            (:s  +shift-mod+))))))
