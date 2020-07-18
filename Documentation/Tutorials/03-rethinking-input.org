@@ -31,6 +31,12 @@ The new system definition reflects this structure:
                 :depends-on ("packages" "l0" "l1")
                 :components ((:file "display-lists")
                              (:file "frame-manager" :depends-on ("display-lists"))))))
+
+(defsystem "eu.turtleware.charming-clim/demo"
+  :license "BSD-2-Clause"
+  :depends-on ("eu.turtleware.charming-clim")
+  :pathname "Auxiliary"
+  :components ((:file "example")))
 #+END_SRC
 
 For now files defined the module ~l2~ are empty. That will be our starting
@@ -79,9 +85,17 @@ point. We'll rename the API packages to match this change:
         #:eu.turtleware.charming-clim/l2))
 #+END_SRC
 
-You may clone the library with this command:
+You may clone the library on the commit after this change with the following
+command:
 
 #+BEGIN_SRC shell
   git clone --branch v0.2 git@github.com:TurtleWarePL/eu.turtleware.charming-clim.git
+#+END_SRC
+
+To start a demo on sbcl, it is enough to run:
+
+#+BEGIN_SRC lisp
+sbcl --eval "(ql:quickload 'eu.turtleware.charming-clim/demo)" \
+     --eval "(eu.turtleware.charming-clim::start-display)"
 #+END_SRC
 
