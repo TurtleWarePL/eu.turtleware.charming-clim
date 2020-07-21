@@ -142,6 +142,10 @@
   ((row :initarg :row :accessor row)
    (col :initarg :col :accessor col)))
 
+(defclass terminal-resize-event (terminal-event)
+  ((rows :initarg :rows :accessor rows)
+   (cols :initarg :cols :accessor cols)))
+
 (defclass keyboard-event (event)
   ((key :initarg :key :accessor key)
    (kch :initarg :kch :accessor kch)
@@ -159,6 +163,9 @@
 (defclass pointer-motion-event  (pointer-event) ())
 (defclass pointer-press-event   (pointer-event) ())
 (defclass pointer-release-event (pointer-event) ())
+
+(defvar *request-terminal-size* nil
+  "When bound to T, cursor position report returns TERMINAL-RESIZE-EVENT.")
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defconstant  +c1-mod+   16)
@@ -254,13 +261,10 @@ Returns a generalized boolean (when true returns an event)."
 (define-key-resolver #\O #\R (num1 num2) (maybe-combo :f3 num2))
 (define-key-resolver #\O #\S (num1 num2) (maybe-combo :f4 num2))
 
-(define-condition cursor-position-report ()
-  ((row :initarg :row :reader row)
-   (col :initarg :col :reader col)))
-
 (define-key-resolver #\[ #\R (row col)
-  (signal 'cursor-position-report :row row :col col)
-  (make-instance 'cursor-position-event :row row :col col))
+  (if *request-terminal-size*
+      (make-instance 'terminal-resize-event :rows row :cols col)
+      (make-instance 'cursor-position-event :row row :col col)))
 
 (defun resolve-key (group num1 num2 |Hasta la vista, baby|)
   (if (null |Hasta la vista, baby|)

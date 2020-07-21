@@ -38,7 +38,8 @@
                              (:file "terminal" :depends-on ("raw-mode"))))
                (:module "l1"
                 :depends-on ("packages" "l0")
-                :components ((:file "cursor")
+                :components ((:file "input")
+                             (:file "cursor")
                              (:file "output")
                              (:file "surface" :depends-on ("output"))
                              (:file "console" :depends-on ("cursor" "output"))))

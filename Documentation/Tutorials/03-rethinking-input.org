@@ -203,9 +203,6 @@ subclasses:
       (or (and (= num2 1) key)
           (make-instance 'keyboard-gesture :key key :mods (1- num2)))))
 
-  (define-key-resolver #\[ #\R (row col)
-    (make-instance 'cursor-position-event :row row :col col))
-
   (defun resolve-key (group num1 num2 |Hasta la vista, baby|)
     (if (null |Hasta la vista, baby|)
         ;; When there is no terminating character, then it is probably a
@@ -280,5 +277,126 @@ subclasses:
                               (:c  +ctrl-mod+)
                               (:a  +alt-mod*+)
                               (:s  +shift-mod+))))))
+#+END_SRC
+
+To distinguish between "normal" cursor position reports and answers to the
+terminal size queries we will introduce a dynamic variable with a default
+value ~nil~. When it is bound to ~t~, then received cursor position is treated
+as a terminal size report.
+
+#+BEGIN_SRC lisp
+  (defvar *request-terminal-size* nil
+    "When bound to T then TERMINAL-RESIZE-EVENT is returned instead of the
+     CURSOR-POSITION-EVENT..")
+
+  (defclass terminal-resize-event (terminal-event)
+    ((rows :initarg :rows :accessor rows)
+     (cols :initarg :cols :accessor cols)))
+
+  (define-key-resolver #\[ #\R (row col)
+    (if *request-terminal-size*
+        (make-instance 'terminal-resize-event :rows row :cols col)
+        (make-instance 'cursor-position-event :row row :col col)))
+#+END_SRC
+
+* Processing input
+
+The input in general is asynchronous and may have numerous targets. For
+instance the keyboard input may be processed by the text input field while the
+pointer motion event is processed by both the frame manager (to update the
+cursor position) and by a button which is highlighted when the pointer moves
+over it. We will implement the input processing in a straight-forward fashion:
+loop over all available events and leave handling them to the console object.
+When necessary it is possible to build more sophisticated architecture on top
+of this (slim) abstraction.
+
+Create a new file ~input.lisp~ and add it to the system definition before the
+console is loaded. Define in it the event processing loop and a protocol
+function ~handle-event~ accepting two arguments: the client and the event. The
+default method does nothing.
+
+#+BEGIN_SRC lisp
+  ;;; First we process available events and only after that (when requested)
+  ;;; probe for the terminal size. This is made that way to avoid ambiguity.
+  (defun process-available-events (&optional update-console-dimensions)
+    (finish-output *terminal*)
+    (loop for event = (read-input)
+          until (null event)
+          do (handle-event *console* event))
+    (when update-console-dimensions
+      (with-cursor-position ((expt 2 16) (expt 2 16))
+        (request-cursor-position)
+        (finish-output *terminal*))
+      ;; Defensive programming: define a deadline for defunct terminals.
+      (loop with deadline = (+ (get-universal-time) 2)
+            with *request-terminal-size* = t
+            for event = (read-input)
+            unless (null event)
+              do (handle-event *console* event)
+            until (or (typep event 'terminal-resize-event)
+                      (> (get-universal-time) deadline)))))
+
+  (defgeneric handle-event (client event)
+    (:method (client event)
+      (declare (ignore client event))))
+#+END_SRC
+
+For now the console will handle only two kinds of events:
+
+- ~terminal-resize-event~ to adjust console dimensions
+- ~keyboard-event~ to handle refreshing and exitting the console
+
+#+BEGIN_SRC lisp
+  (defmethod handle-event ((client console) (event terminal-resize-event))
+    (let ((rows (rows event))
+          (cols (cols event)))
+      (setf (rows client) rows)
+      (setf (cols client) cols)
+      (setf (r2 (clip client)) rows)
+      (setf (c2 (clip client)) cols)
+      (adjust-array (data client)
+                    (list rows cols)
+                    :initial-element nil)))
+
+  (defmethod handle-event ((client console) (event keyboard-event))
+    (cond ((keyp event #\Q :c)
+           (cl-user::quit))
+          ((keyp event #\R :c)
+           (process-available-events t)
+           (clear-terminal)
+           (ctl (:bgc #x22222200)
+                (:clr 1 1 (rows *console*) (cols *console*))))))
+#+END_SRC
+
+The method ~initialize-instance~ defined for method instead of calling
+~update-console-dimensiosn~ will now call ~process-available-events~:
+
+#+BEGIN_SRC lisp
+(defmethod initialize-instance :after
+    ((instance console) &rest args &key fgc bgc row col cvp ptr)
+  (setf (hnd instance) (init-terminal))
+  (set-mouse-tracking ptr)
+  (setf (cur instance)
+        (make-instance 'cursor :fgc fgc :bgc bgc :row row :col col :cvp cvp))
+  (let ((*console* instance))
+    (process-available-events t)))
+#+END_SRC
+
+Functions ~get-cursor-position~ and ~update-console-dimensions~ should be
+removed now. Additionally remove the function ~handle-event~ from the demo
+file and modify the function ~show-screen~:
+
+#+BEGIN_SRC lisp
+  #+(or) ;; remove the function
+  (defun handle-event #|...|#)
+
+  ;; call process-available-events
+  (defun show-screen ()
+    (loop with fm = (make-instance 'frame-manager)
+          do (ensure-demos fm)
+          do (process-available-events)
+          do (display-screen fm)
+          do (show-modeline)
+          do (ctl (:fls))))
 #+END_SRC
 
