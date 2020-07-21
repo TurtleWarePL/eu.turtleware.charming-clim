@@ -3,11 +3,15 @@
 (defvar *console*)
 
 (defmacro with-console ((&rest args
-                         &key ios fgc bgc cvp fps &allow-other-keys)
+                         &key
+                           ios fgc bgc cvp fps
+                           (console-class ''console)
+                         &allow-other-keys)
                         &body body)
   (declare (ignore fgc bgc cvp fps))
+  (remf args :console-class)
   `(let* ((*terminal* ,ios)
-          (*console* (make-instance 'console ,@args)))
+          (*console* (make-instance ,console-class ,@args)))
      (unwind-protect (with-buffer (*console*) ,@body)
        (close-terminal (hnd *console*)))))
 

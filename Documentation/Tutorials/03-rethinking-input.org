@@ -400,3 +400,37 @@ file and modify the function ~show-screen~:
           do (ctl (:fls))))
 #+END_SRC
 
+* Console extensibility
+
+The macro ~with-console~ is quite limited in a sense, that it creates only the
+object of class ~console~. If we want to allow extending it by third-party
+software the easiest way would be subclassing the console and specializing
+necessary methods, and that's how we'll approach that.
+
+#+BEGIN_SRC lisp
+  (defmacro with-console ((&rest args
+                           &key
+                             ios fgc bgc cvp fps
+                             (console-class ''console)
+                           &allow-other-keys)
+                          &body body)
+    (declare (ignore fgc bgc cvp fps))
+    (remf args :console-class)
+    `(let* ((*terminal* ,ios)
+            (*console* (make-instance ,console-class ,@args)))
+       (unwind-protect (with-buffer (*console*) ,@body)
+         (close-terminal (hnd *console*)))))
+#+END_SRC
+
+We will also introduce a protocol function ~handle-repaint~ which will be
+responsible for creating the content. Default method draws nothing. It accepts
+two arguments: the client and the region. For now we'll ignore the region.
+
+#+BEGIN_SRC lisp
+  (defgeneric handle-repaint (client region)
+    (declare (ignore client region)))
+#+END_SRC
+
+This function is orthogonal to ~flush-buffer~, because it is expected populate
+the buffer in some application-specific manner, while ~flush-buffer~ is used
+to "show" the content on the screen. It is time to write a game!

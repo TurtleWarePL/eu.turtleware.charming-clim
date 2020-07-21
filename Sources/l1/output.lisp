@@ -1,5 +1,8 @@
 (in-package #:eu.turtleware.charming-clim)
 
+(defgeneric handle-repaint (client region)
+  (declare (ignore client region)))
+
 (defgeneric flush-buffer (buffer &rest args))
 (defgeneric put-cell (buffer row col str fg bg))
 (defgeneric set-cell (buffer row col str fg bg))
