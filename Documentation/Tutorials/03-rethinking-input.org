@@ -313,7 +313,8 @@ of this (slim) abstraction.
 Create a new file ~input.lisp~ and add it to the system definition before the
 console is loaded. Define in it the event processing loop and a protocol
 function ~handle-event~ accepting two arguments: the client and the event. The
-default method does nothing.
+default method does nothing. We'll also add a condition and a function to
+signal that the user wants to exit the application.
 
 #+BEGIN_SRC lisp
   ;;; First we process available events and only after that (when requested)
@@ -339,12 +340,15 @@ default method does nothing.
   (defgeneric handle-event (client event)
     (:method (client event)
       (declare (ignore client event))))
+
+  (define-condition exit () ())
+  (defun exit () (signal 'exit))
 #+END_SRC
 
 For now the console will handle only two kinds of events:
 
 - ~terminal-resize-event~ to adjust console dimensions
-- ~keyboard-event~ to handle refreshing and exitting the console
+- ~keyboard-event~ to handle common keystrokes
 
 #+BEGIN_SRC lisp
   (defmethod handle-event ((client console) (event terminal-resize-event))
@@ -360,7 +364,9 @@ For now the console will handle only two kinds of events:
 
   (defmethod handle-event ((client console) (event keyboard-event))
     (cond ((keyp event #\Q :c)
-           (cl-user::quit))
+           (signal 'exit))
+          ((keyp event #\E :c)
+           (error "HI!"))
           ((keyp event #\R :c)
            (process-available-events t)
            (clear-terminal)
@@ -387,7 +393,7 @@ removed now. Additionally remove the function ~handle-event~ from the demo
 file and modify the function ~show-screen~:
 
 #+BEGIN_SRC lisp
-  #+(or) ;; remove the function
+  #+(or) ;; remove this function
   (defun handle-event #|...|#)
 
   ;; call process-available-events
@@ -422,15 +428,74 @@ necessary methods, and that's how we'll approach that.
          (close-terminal (hnd *console*)))))
 #+END_SRC
 
+We'll also add a new restart allowing switching the console class at runtime
+and for better control transfer.
+
+#+BEGIN_SRC lisp
+(defmacro with-console ((&rest args
+                         &key
+                           ios fgc bgc cvp fps
+                           (console-class ''console)
+                         &allow-other-keys)
+                        &body body)
+  (declare (ignore fgc bgc cvp fps))
+  (remf args :console-class)
+  `(let ((*terminal* ,ios)
+         (console-class ,console-class))
+     (loop
+       (restart-case
+           (let ((*console* (make-instance console-class ,@args)))
+             (handler-case (with-buffer (*console*) ,@body)
+               (error (e)
+                 (close-terminal (hnd *console*))
+                 (error e))
+               (exit (e)
+                 (close-terminal (hnd *console*))
+                 (return))
+               (:no-error (&rest values)
+                 (close-terminal (hnd *console*)))))
+         (again ()
+           :report "Start display again.")
+         (change (new-console-class)
+           :report "Change the console class."
+           :interactive (lambda ()
+                          (format *debug-io* "Type the class symbol:~%")
+                          (format *debug-io* "~a> '" (package-name *package*))
+                          (finish-output *debug-io*)
+                          (list (read)))
+           (setf console-class new-console-class))))))
+#+END_SRC
+
+In the demo the function ~start-display~ reduces to
+
+#+BEGIN_SRC lisp
+  (defun start-display ()
+    (with-console (:ios *terminal-io*)
+      (show-screen)))
+#+END_SRC
+
+Now when we are dropped into the debugger, the terminal is properly reset to
+accept "normal" keyboard input. "Exitting" the applications simply returns
+from a scope of the ~with-console-block~ instead of quitting the lisp process.
+
 We will also introduce a protocol function ~handle-repaint~ which will be
 responsible for creating the content. Default method draws nothing. It accepts
-two arguments: the client and the region. For now we'll ignore the region.
+two arguments: the client and the region. For now the region is ignored.
 
 #+BEGIN_SRC lisp
   (defgeneric handle-repaint (client region)
     (declare (ignore client region)))
 #+END_SRC
 
-This function is orthogonal to ~flush-buffer~, because it is expected populate
-the buffer in some application-specific manner, while ~flush-buffer~ is used
-to "show" the content on the screen. It is time to write a game!
+This function is complementary to ~flush-buffer~, because it is expected to
+populate a buffer in some application-specific manner, while ~flush-buffer~ is
+used to "show" the content on the screen.
+
+Now it is time to export new operators from the l1 package:
+
+#+BEGIN_SRC lisp
+  (defpackage #:eu.turtleware.charming-clim/l1
+    (:export #:with-console #:out #:ctl #:exit)
+    (:export #:console #:handle-event #:handle-repaint))
+#+END_SRC
+

@@ -28,7 +28,8 @@
            #:set-mouse-tracking))
 
 (defpackage #:eu.turtleware.charming-clim/l1
-  (:export #:with-console #:out #:ctl))
+  (:export #:with-console #:out #:ctl)
+  (:export #:console #:handle-event #:handle-repaint))
 
 (defpackage #:eu.turtleware.charming-clim/l2
   (:export))

@@ -24,3 +24,5 @@
   (:method (client event)
     (declare (ignore client event))))
 
+(define-condition exit () ())
+(defun exit () (signal 'exit))

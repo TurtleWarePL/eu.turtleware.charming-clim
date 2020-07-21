@@ -99,13 +99,8 @@
     (out (:row row :col 1) str)))
 
 (defun start-display ()
-  (loop
-    (with-simple-restart (again "Start display again.")
-      (ignore-errors (swank:create-server))
-      (handler-case
-          (with-console (:ios *terminal-io*)
-            (show-screen))
-        (error (sig) (error sig))))))
+  (with-console (:ios *terminal-io*)
+    (show-screen)))
 
 
 (defun lambda-demo (frame)
