@@ -419,18 +419,21 @@ Returns a generalized boolean (when true returns an event)."
   (when (char= ch +delete+)
     :delete))
 
-(defun read-input (&aux (ch (read-char-no-hang *terminal*)))
+(defun read-input (&optional (waitp nil))
   ;; READ-CHAR may read more than one byte and return an alphanumeric
   ;; character.
-  (cond ((null ch)
-         (return-from read-input))
-        ((graphic-char-p ch)
-         (return-from read-input
-           (make-instance 'keyboard-event :kch ch :key ch :mods 0)))
-        ((deletep ch))
-        ((escapep ch))
-        ((controlp ch))
-        (t (make-instance 'unknown-terminal-event :seq (list ch)))))
+  (let ((ch (if waitp
+                (read-char *terminal*)
+                (read-char-no-hang *terminal*))))
+    (cond ((null ch)
+           (return-from read-input))
+          ((graphic-char-p ch)
+           (return-from read-input
+             (make-instance 'keyboard-event :kch ch :key ch :mods 0)))
+          ((deletep ch))
+          ((escapep ch))
+          ((controlp ch))
+          (t (make-instance 'unknown-terminal-event :seq (list ch))))))
 
 (defun keyp (ch key &rest mods)
   (and (typep ch 'keyboard-event)
