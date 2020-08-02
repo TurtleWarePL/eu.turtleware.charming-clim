@@ -84,6 +84,39 @@
     (declare (ignore a))
     (sgr "48;2;" r ";" g ";" b)))
 
+(defun reset-text-style ()
+  (csi "0" "m"))
+
+(defun set-text-style (&key
+                         (intensity  nil intensity-p)
+                         (italicized nil italicized-p)
+                         (underline  nil underline-p)
+                         (crossout   nil crossout-p)
+                         (blink      nil blink-p)
+                         (inverse    nil inverse-p)
+                         (invisible  nil invisible-p))
+  (let ((numbers (list (and intensity-p
+                            (ecase intensity
+                              (:faint 2)
+                              (:normal 22)
+                              (:bold 1)))
+                       (and underline-p
+                            (ecase underline
+                              (:none 24)
+                              (:single  4)
+                              (:double 21)))
+                       (and italicized-p
+                            (if italicized 3 23))
+                       (and blink-p
+                            (if blink      5 25))
+                       (and inverse-p
+                            (if inverse    7 27))
+                       (and invisible-p
+                            (if invisible  8 28))
+                       (and crossout-p
+                            (if crossout   9 29)))))
+    (csi (format nil "~{~a~^;~}" (remove nil numbers)) "m")))
+
 (defun save-cursor-position ()
   (csi "s"))
 
