@@ -161,6 +161,17 @@
 (defun request-cursor-position ()
   (csi 6 "n"))
 
+#+poor-coverage
+(progn
+  (defun request-terminal-ch-size ()
+    (csi "18t"))
+
+  (defun request-terminal-px-size ()
+    (csi "14t"))
+
+  (defun request-cell-px-size ()
+    (csi "16t")))
+
 
 ;;; Input
 
@@ -178,6 +189,20 @@
 (defclass terminal-resize-event (terminal-event)
   ((rows :initarg :rows :accessor rows)
    (cols :initarg :cols :accessor cols)))
+
+#+poor-coverage
+(progn
+  (defclass terminal-px-size-event (terminal-event)
+    ((height :initarg :height :accessor height)
+     (width :initarg :width :accessor width)))
+
+  (defclass cell-px-size-event (terminal-event)
+    ((height :initarg :height :accessor height)
+     (width :initarg :width :accessor width)))
+
+  (defclass terminal-ch-size-event (terminal-event)
+    ((rows :initarg :rows :accessor rows)
+     (cols :initarg :cols :accessor cols))))
 
 (defclass keyboard-event (event)
   ((key :initarg :key :accessor key)
@@ -298,6 +323,15 @@ Returns a generalized boolean (when true returns an event)."
   (if *request-terminal-size*
       (make-instance 'terminal-resize-event :rows row :cols col)
       (make-instance 'cursor-position-event :row row :col col)))
+
+#+poor-coverage
+(define-key-resolver #\[ #\t (opcode height width)
+  ;; These reports are xterm extensions. There are more! But we do not provide
+  ;; requests for them (i.e for toggle full-screen).
+  (case opcode
+    (4 (make-instance 'terminal-px-size-event :height height :width width))
+    (6 (make-instance 'cell-px-size-event     :height height :width width))
+    (8 (make-instance 'terminal-ch-size-event :rows   height :cols  width))))
 
 (defun resolve-key (group num1 num2 |Hasta la vista, baby|)
   (if (null |Hasta la vista, baby|)
