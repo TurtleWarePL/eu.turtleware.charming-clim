@@ -283,12 +283,12 @@ Returns a generalized boolean (when true returns an event)."
 
 (defvar *key-resolvers* (make-hash-table))
 
-(defmacro define-key-resolver (group terminator (num1 num2) &body body)
+(defmacro define-key-resolver (group terminator args &body body)
   `(setf (gethash ,(+ (char-code terminator)
                       (ash (char-code group) 8))
                   *key-resolvers*)
-         (lambda (,num1 ,num2)
-           (declare (ignorable ,num1 ,num2))
+         (lambda ,args
+           (declare (ignorable ,@args))
            ,@body)))
 
 (defun maybe-combo (key num2)
@@ -333,7 +333,7 @@ Returns a generalized boolean (when true returns an event)."
     (6 (make-instance 'cell-px-size-event     :height height :width width))
     (8 (make-instance 'terminal-ch-size-event :rows   height :cols  width))))
 
-(defun resolve-key (group num1 num2 |Hasta la vista, baby|)
+(defun resolve-key (group args |Hasta la vista, baby|)
   (if (null |Hasta la vista, baby|)
       ;; When there is no terminating character, then it is probably a
       ;; result of pressing ALT+<char>. This is ambigous, i.e ALT+[
@@ -343,16 +343,16 @@ Returns a generalized boolean (when true returns an event)."
                      (#.+delete+ :delete)
                      (t group))
                    (1+ +alt-mod+))
-      (funcall (gethash (+ (char-code |Hasta la vista, baby|)
-                           (ash (char-code group) 8))
-                        *key-resolvers*
-                        (lambda (num1 num2)
-                          (make-instance 'unknown-terminal-event
-                                         :seq (list +escape+
-                                                    group
-                                                    num1 num2
-                                                    |Hasta la vista, baby|))))
-               num1 num2)))
+      (apply (gethash (+ (char-code |Hasta la vista, baby|)
+                         (ash (char-code group) 8))
+                      *key-resolvers*
+                      (lambda (&rest args)
+                        (make-instance 'unknown-terminal-event
+                                       :seq (list +escape+
+                                                  group
+                                                  args
+                                                  |Hasta la vista, baby|))))
+             args)))
 
 (defun resolve-mouse (btn col row |Hasta la vista, baby|)
   (let ((state (cond ((not (zerop (ldb (byte 1 5) btn))) :motion)
@@ -412,8 +412,7 @@ Returns a generalized boolean (when true returns an event)."
             (resolve-mouse num1 num2 num3 terminator)))
         (multiple-value-bind (nums terminator)
             (parse-escape-sequence)
-          (destructuring-bind (&optional (num1 1) (num2 1)) nums
-            (resolve-key next-ch num1 num2 terminator))))
+          (resolve-key next-ch nums terminator)))
     :escape))
 
 (defun deletep (ch)
