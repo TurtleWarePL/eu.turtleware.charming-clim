@@ -59,7 +59,7 @@
 (defmethod (setf ptr) :after (ptr (instance console))
   (set-mouse-tracking mouse-tracking (not (null ptr))))
 
-(defmethod flush-buffer ((buffer console) &rest args &key force)
+(defmethod flush-output ((buffer console) &rest args &key force)
   (declare (ignore args))
   (let* ((cursor (cur buffer))
          (last-fg (fgc cursor))

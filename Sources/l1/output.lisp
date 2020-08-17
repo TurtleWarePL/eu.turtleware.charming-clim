@@ -1,9 +1,6 @@
 (in-package #:eu.turtleware.charming-clim)
 
-(defgeneric handle-repaint (client region)
-  (declare (ignore client region)))
-
-(defgeneric flush-buffer (buffer &rest args))
+(defgeneric flush-output (buffer &rest args))
 (defgeneric put-cell (buffer row col str fg bg))
 (defgeneric set-cell (buffer row col str fg bg))
 
@@ -75,7 +72,7 @@
                          (:col `(setf (col buf) ,@args))
                          (:rnd `(setf (rnd buf) ,@args))
                          (:clr `(clear-rectangle ,@args))
-                         (:fls `(flush-buffer buf ,@args)))))))
+                         (:fls `(flush-output buf ,@args)))))))
 
 (defun clear-rectangle (r1 c1 r2 c2)
   (loop with str = (make-string (1+ (- c2 c1)) :initial-element #\space)
@@ -148,7 +145,7 @@
                     (incf ,ccol))
            finally (return (values ,crow ,ccol)))))
 
-(defmethod flush-buffer ((buffer buffer) &rest args)
+(defmethod flush-output ((buffer buffer) &rest args)
   (declare (ignore buffer args))
   #|whoosh|#)
 

@@ -31,7 +31,7 @@
                (<= (c1 buf) vcol (c2 buf)))
       (set-cell (sink buf) vrow vcol ch fg bg))))
 
-(defmethod flush-buffer ((buffer surface) &rest args &key force)
+(defmethod flush-output ((buffer surface) &rest args &key force)
   (declare (ignore args))
   (loop for row from 1 upto (rows buffer)
         do (loop for col from 1 upto (cols buffer)
