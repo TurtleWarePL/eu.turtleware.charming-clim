@@ -53,7 +53,8 @@
   :depends-on ("eu.turtleware.charming-clim")
   :pathname "Examples"
   :components ((:file "examples")
-               (:file "l0-example")))
+               (:file "l0-example")
+               (:file "l1-example")))
 
 (defsystem "eu.turtleware.charming-clim/demo"
   :license "BSD-2-Clause"

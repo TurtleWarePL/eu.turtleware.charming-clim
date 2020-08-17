@@ -1,0 +1,265 @@
+#+title: Charming Manual
+#+author: Daniel 'jackdaniel' Kochmański
+#+email: daniel@turtleware.eu
+
+* Introduction
+
+"Charming" is a display server abstraction built on top of the ECMA-48
+standard with using a few popular extensions. The purpose of this project is
+to fun and to show-off, qualities which are quickly disappearing from the
+professional programming setting. The library proposes multiple (and mutually
+exclusive) APIs which are layered on top of each other.
+
+- level0 :: direct manipulation of the terminal
+- level1 :: buffered input-output with the state memoization
+- level2 :: stateful input-output processing
+- level3 :: the frame manager and a sample toolkit
+
+This manual will go through each abstraction and explain how to use it.
+
+* Level 0: Terminal Manipulation
+
+** Initializing the terminal
+
+Communication with the terminal is done with a stream bound to the variable
+~*terminal*~ by the programmer. The terminal must be initialized and closed
+after use. For instance when the stream attached to the terminal is bound to
+the variable ~*terminal-io*~, the whole terminal session looks like this:
+
+#+BEGIN_SRC lisp
+  (let* ((*terminal* *terminal-io*)
+         (handler (l0:init-terminal)))
+    (unwind-protect (run)
+      (l0:close-terminal handler)))
+#+END_SRC
+
+Where ~run~ is the function which actually works with the terminal.
+
+** Manipulating the cursor
+
+The cursor position may be set to arbitrary row and column, or may be moved
+relative to the current position. The function ~set-cursor-position~ accepts
+two arguments: row and column, while functions ~cursor-up~, ~cursor-down~,
+~cursor-right~ and ~cursor-left~ each accept one argument denoting how many
+characters up the cursor should move. For instance:
+
+#+BEGIN_SRC lisp
+  (l0:set-cursor-position 12 42) ; row 12, col 42
+  (l0:cursor-up 3)               ; row  9, col 42
+#+END_SRC
+
+The cursor position may be stored and restored later after some other
+operations are done. Calling ~save-cursor-position~ saves the current position
+until ~restore-cursor-position~ is called, which restores it.
+
+The macro ~with-cursor-position~ combines functions ~set-cursor-position~,
+~save-cursor-position~ and ~restore-cursor-position~ to allow temporary change
+of the cursor position. After the body of a macro is executed, the old cursor
+position is restored.
+
+#+BEGIN_SRC lisp
+  (l0:with-cursor-position (10 23)
+    (do-something))
+#+END_SRC
+
+The function ~set-cursor-visibility~ is used to control the cursor visibility.
+The function accepts one argument which is a generalized boolean.
+
+** Clearing the terminal
+
+The terminal may be cleared in three ways.
+
+1. ~reset-terminal~ is most drastic for it clears the terminal and resets all
+   attributes including the cursor position.
+
+2. ~clear-terminal~ is more fine-grained and provides three modes:
+   - 0 :: clear from the cursor position to the end of the display
+   - 1 :: clear from the cursor position to the start of the display
+   - 2 :: clear entire display (default)
+
+3. ~clear-line~ operates on a line and also has three modes:
+   - 0 :: clear from the cursor position to the end of the line
+   - 1 :: clear from the cursor position to the start of the line
+   - 2 :: clear entire line (default)
+
+** Writing on the terminal
+
+Drawing on the terminal is done by putting characters in the terminal
+cells. Each written character may have attributes: the foreground and the
+background colors and the text style.
+
+Colors are set with RGBA 4-byte values. The alpha value is ignored and colors
+are assumed to be opaque. To set colors:
+
+- ~set-foreground-color~ :: sets the foreground color
+- ~set-background-color~ :: sets the background color
+
+Text attributes are configured with a function ~set-text-style~ which argument
+is one of ~:normal~ ~:bold~ ~:faint~ ~:italicized~ ~:underlined~ and ~:blink~.
+
+To write some text on the console use the function ~put~ which accepts any
+number of arguments and writes them aesthetically to the terminal. It is
+necessary to call finish-output on the ~*terminal*~ to flush buffers.
+
+Example:
+
+#+BEGIN_SRC lisp
+  (l0:set-foreground-color #x884444ff)
+  (l0:set-text-style)
+  (l0:put "Hello world!")
+  (finish-output l0:*terminal*)
+#+END_SRC
+
+** Tracking the pointer
+
+This uses xterm extension implemented by various terminal emulators. To start
+tracking the mouse pointer events, call the function ~set-mouse-tracking~. Its
+only argument is a generalized boolean which which indicates whether tracking
+should be enabled.
+
+Example:
+
+#+BEGIN_SRC lisp
+  (set-mouse-tracking t)
+  (loop for event = (l0:read-input t)
+        when (typep event 'l0:pointer-event)
+          do (set-cursor-position (row event) (col event))
+             (finish-output *terminal*))
+#+END_SRC
+
+** Requests
+
+Requests are processed asynchronously. First the request is sent, and then
+after some time a corresponding event is read. In examples in this section we
+ignore all events until the response is read, so they are not very practical.
+
+It is important to keep in mind, that requests may be buffered, so in order to
+"make them happen" it is necessary to call ~finish-output~ or ~force-output~
+on the ~*terminal*~ stream variable after the request, if immedietely after
+the loop waiting for the event follows. Otherwise the application may hang
+waiting for the input which will never arrive.
+
+*** Cursor position
+
+To request the current cursor position call the function
+~request-cursor-position~.
+
+Response depends on the value of a variable ~*request-terminal-size*~:
+- T   :: the response event type is ~terminal-resize-event~
+- NIL :: the response event type is ~cursor-position-event~
+
+This is to allow querying the terminal size by setting the cursor position to
+a large value and requesting its position - the terminal will clamp the
+position to the last row and column. For instance:
+
+#+BEGIN_SRC lisp
+  (defun get-terminal-size (&aux (l0:*request-terminal-size* t))
+    (loop initially (l0:with-cursor-position (32000 32000)
+                      (l0:request-cursor-position))
+                    (finish-output l0:x*terminal*)
+          for event = (l0:read-input t)
+          when (typep event 'l0:terminal-resize-event)
+            do (return-from get-terminal-size
+                 (values (l0:rows event) (l0:cols event)))))
+
+  (defun get-cursor-position (&aux (l0:*request-terminal-size* nil))
+    (loop initially (l0:request-cursor-position)
+                    (finish-output l0:*terminal*)
+          for event = (l0:read-input t)
+          when (typep event 'l0:cursor-position-event)
+            do (return-from get-cursor-position
+                 (values (l0:row event) (l0:col event)))))
+#+END_SRC
+
+** Processing the input
+
+To read input it is enough to call the function ~read-input~. The function
+returns either NIL, when no input is available, or an instance of the class
+~event~. The function accepts one argument ~waitp~, which indicates whether
+the function should wait for input if none is present, or immedietely return.
+
+*** event
+
+This class is a superclass of all events.
+
+*** terminal-event (event)
+
+This class is a superclass of all events which represent control sequences
+send by the terminal.
+
+*** unknown-terminal-event (terminal-event)
+
+When the terminal produces a sequence which can't be parsed, then instance of
+this class is returned. The sequence may be read from the event with a reader
+~seq~.
+
+*** cursor-position-event (terminal-event)
+
+When the programmer calls ~request-cursor-position~, then the terminal will
+produce a sequence which will be parse to this class instance. This event has
+two readers ~row~ and ~col~, which indicate the current cursor position.
+
+*** terminal-resize-event (terminal-event)
+
+When the programmer calls ~request-cursor-position~ with a variable
+~*request-terminal-size*~ bound to ~T~, then the terminal will produce a
+sequence which will be parsed to this class instance. This event has two
+readers ~rows~ and ~cols~, which indicate the screen dimensions.
+
+It is not defined whether this event may happen without prior call to the
+function ~request-cursor-position~ with ~*request-terminal-size~ = ~T~.
+
+*** keyboard-event (event)
+
+Keyboard event represents a pressed key and modifiers being pressed at that
+time. The event has three readers: ~key~ representing the pressed key, ~kch~
+representing the pressed character or NIL if the key does not represent one
+and ~mods~ representing pressed modifiers.
+
+The event is accompanied with a predicate ~keyp~ which may be used to check
+whether the keyboard event matches a key combination. For instance:
+
+#+BEGIN_SRC lisp
+  (keyp event :f1 :M :C) ; Ctrl + Meta + F1
+  (keyp event :f1 :A :C) ; Ctrl + Alt + F1
+  (keyp event #\S)       ; Shift + s
+  (keyp event :f1 :s)    ; Shift + F1
+#+END_SRC
+
+The predicate may be used with other types of events in which case it will
+return NIL.
+
+The function ~set-alt-is-meta~ may be used to map the key Alt to Meta (that
+is, when the reported modifier is Alt, the library will treat it as Meta). For
+instance:
+
+#+BEGIN_SRC lisp
+  (set-alt-is-meta t)   ; Alt is treated as Meta
+  (set-alt-is-meta nil) ; Alt is treated as Alt
+#+END_SRC
+
+Currently recognized non-ascii keys are: ~:home~, ~:insert~, ~:delete~,
+~:end~, ~:page-up~, ~:page-down~, ~:f1~ up to ~:f20~, ~:key-up~, ~:key-down~,
+~:key-right~, ~:key-left~, ~:escape~ and ~:delete~.
+
+Note, that the window manager or the terminal application may not send some
+keys to the application, for instance Alt+Number may be reserved for switching
+tabs and ~:f1~ may be mapped to open the "Help" menu.
+
+*** pointer-event (event)
+
+Pointer event represents an event produced by a pointer manipulation when the
+pointer tracking is on. The event has five readers: ~row~ and ~col~ which
+indicate the pointer position, ~btn~ representing the pointer button, ~mods~
+representing pressed modifiers and ~state~ which denotes the kind of event.
+
+~btn~ is one of ~:none~, ~:left~, ~:middle~, ~:right~, ~:wheel-up~,
+~:wheel-down~, ~:wheel-left~, ~:wheel-right~, ~:extra-1~, ~:extra-2~,
+~:extra-3~ and ~:extra-4~.
+
+~state~ is one of ~:motion~, ~:press~ and ~:release~.
+
+Depending on the state, the exact event class is one of
+~pointer-motion-event~, ~pointer-press-event~ or
+~pointer-release-event~. These classes are specified for the programmer
+convenience and inherit from the class ~pointer-event~.

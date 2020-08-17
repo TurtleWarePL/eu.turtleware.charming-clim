@@ -27,6 +27,7 @@
 
            #:set-cursor-visibility
            #:set-mouse-tracking
+           #:set-alt-is-meta
 
            #:*request-terminal-size*
            #:request-cursor-position
@@ -46,7 +47,7 @@
   (:export #:*console* #:*buffer*)
   (:export #:with-console #:with-buffer #:out #:ctl)
   (:export #:process-available-events #:exit)
-  (:export #:console #:surface #:handle-event #:handle-repaint))
+  (:export #:console #:surface #:handle-event))
 
 (defpackage #:eu.turtleware.charming-clim/l2
   (:export))
