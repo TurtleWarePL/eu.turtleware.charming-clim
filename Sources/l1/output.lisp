@@ -4,25 +4,9 @@
 (defgeneric put-cell (buffer row col str fg bg))
 (defgeneric set-cell (buffer row col str fg bg))
 
-(defgeneric rnd (buffer))
-(defgeneric (setf rnd) (mode buffer)
+(defgeneric rend (buffer))
+(defgeneric (setf rend) (mode buffer)
   (:argument-precedence-order buffer mode))
-
-(defgeneric fgc (buffer))
-(defgeneric (setf fgc) (fgc buffer)
-  (:argument-precedence-order buffer fgc))
-
-(defgeneric bgc (buffer))
-(defgeneric (setf bgc) (bgc buffer)
-  (:argument-precedence-order buffer bgc))
-
-(defgeneric row (buffer))
-(defgeneric (setf row) (row buffer)
-  (:argument-precedence-order buffer row))
-
-(defgeneric col (buffer))
-(defgeneric (setf col) (col buffer)
-  (:argument-precedence-order buffer col))
 
 (defgeneric rows (buffer))
 (defgeneric cols (buffer))
@@ -61,16 +45,15 @@
      (set-cell buf ,row ,col str ,fgc ,bgc)))
 
 (defmacro ctl (&rest operations)
-  `(let ((buf *buffer*))
-     (declare (ignorable buf))
+  `(let* ((buf *buffer*)
+          (pen (bcur buf)))
+     (declare (ignorable buf pen))
      ,@(loop for op in operations
              collect (destructuring-bind (name &rest args) op
                        (ecase name
-                         (:fgc `(setf (fgc buf) ,@args))
-                         (:bgc `(setf (bgc buf) ,@args))
-                         (:row `(setf (row buf) ,@args))
-                         (:col `(setf (col buf) ,@args))
-                         (:rnd `(setf (rnd buf) ,@args))
+                         (:pen `(change-cursor-pen pen ,@args))
+                         (:pos `(change-cursor-position pen ,@args))
+                         (:rnd `(setf (rend buf) ,@args))
                          (:clr `(clear-rectangle ,@args))
                          (:fls `(flush-output buf ,@args)))))))
 
@@ -97,25 +80,19 @@
    (bg :initarg :bg :accessor bg)
    (dirty-p :initarg :dirty-p :accessor dirty-p))
   (:default-initargs :ch #\space
-                     :fg (fgc *buffer*)
-                     :bg (bgc *buffer*)
+                     :fg (fgc (bcur *buffer*))
+                     :bg (bgc (bcur *buffer*))
                      :dirty-p t))
 
 (defclass output-buffer ()
-  ((fgc :initarg :fgc :accessor fgc :documentation "Foregorund color")
-   (bgc :initarg :bgc :accessor bgc :documentation "Background color")
-   (row :initarg :row :accessor row :documentation "Current row")
-   (col :initarg :col :accessor col :documentation "Current col")
-   (rnd :initarg :rnd :accessor rnd :documentation "Rendering mode")
+  ((bcur :initarg :bcur :accessor bcur :documentation "Buffer cursor")
+   (rend :initarg :rend :accessor rend :documentation "Rendering mode")
    (clip :initarg :clip :accessor clip :documentation "Clipping object")
    (data :initarg :data :accessor data :documentation "Data buffer")
    (rows :initarg :rows :accessor rows :documentation "Buffer number of rows")
    (cols :initarg :cols :accessor cols :documentation "Buffer number of cols"))
-  (:default-initargs :fgc #xffa0a0
-                     :bgc #x222222
-                     :row 1
-                     :col 1
-                     :rnd :buf
+  (:default-initargs :bcur (make-instance 'cursor)
+                     :rend :buf
                      :data (make-array (list 0 0) :adjustable t)
                      :clip (make-instance 'clip)))
 
@@ -163,9 +140,10 @@
          (make-instance 'cell :ch #\space :fg #xffffff00 :bg #x00000000)))))
 
 (defmethod set-cell ((buf output-buffer) row col str fgc bgc)
-  (let ((rendering-mode (rnd buf))
-        (row (or row (row buf)))
-        (col (or col (col buf))))
+  (let ((pen (bcur buf))
+        (rendering-mode (rend buf))
+        (row (or row (row pen)))
+        (col (or col (col pen))))
     (iterate-cells (ch crow ccol wrap-p)
         (buf row col (string str))
       (when (inside-p buf crow ccol)
@@ -176,8 +154,8 @@
                            (eql bgc (bg cell)))))
           (unless clean
             (setf (ch cell) ch
-                  (fg cell) (or fgc (fgc buf))
-                  (bg cell) (or bgc (bgc buf))))
+                  (fg cell) (or fgc (fgc pen))
+                  (bg cell) (or bgc (bgc pen))))
           (setf (dirty-p cell)
                 (and (not clean)
                      (not (eq rendering-mode :wrt)))))))

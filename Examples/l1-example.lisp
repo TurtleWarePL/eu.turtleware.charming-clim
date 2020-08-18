@@ -16,10 +16,10 @@
   (l1:ctl (:clr 1 1
                 (eu.turtleware.charming-clim::rows l1:*console*)
                 (eu.turtleware.charming-clim::cols l1:*console*))
-          (:bgc #x33333300) (:fgc #xbbbbbb00))
+          (:pen :fgc #xbbbbbb00 :bgc #x33333300))
   (dolist (frame (frames fm))
     (handle-repaint frame))
-  (l1:ctl (:bgc #x11111100) (:fgc #xbbbbbb00)))
+  (l1:ctl (:pen :fgc #xbbbbbb00 :bgc #x11111100)))
 
 (defmethod handle-repaint ((frame frame))
   ;; Render decorations.

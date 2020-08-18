@@ -3,12 +3,10 @@
 (defvar *console*)
 
 (defmacro with-console ((&rest args
-                         &key
-                           ios fgc bgc cvp fps
+                         &key ios
                            (console-class ''console)
                          &allow-other-keys)
                         &body body)
-  (declare (ignore fgc bgc cvp fps))
   (remf args :console-class)
   `(let ((*terminal* ,ios)
          (console-class ,console-class))
@@ -37,17 +35,16 @@
 
 (defclass console (output-buffer)
   ((ios :initarg :ios :accessor ios :documentation "Console I/O stream")
-   (cur :initarg :cur :accessor cur :documentation "Terminal cursor")
-   (ptr :initarg :ptr :accessor ptr :documentation "Pointer device")
-   (fps :initarg :fps :accessor fps :documentation "Desired framerate")
+   (cur :initarg :cur :accessor cur :documentation "The terminal cursor")
+   (ptr :initarg :ptr :accessor ptr :documentation "The pointer cursor")
    (hnd               :accessor hnd :documentation "Terminal handler"))
   (:default-initargs :ios (error "I/O stream must be specified.")
-                     :ptr t :cvp t))
+                     :cur (make-instance 'tcursor :cvp t)
+                     :ptr (make-instance 'pointer :cvp nil)))
 
 (defmethod initialize-instance :after
     ((instance console) &rest args &key cvp ptr)
   (setf (hnd instance) (init-terminal))
-  (set-mouse-tracking ptr)
   (setf (cur instance) (make-instance 'cursor  :cvp cvp))
   (setf (ptr instance) (make-instance 'pointer :cvp nil))
   (let ((*console* instance))
@@ -135,5 +132,5 @@
         ((keyp event #\R :c)
          (process-available-events t)
          (clear-terminal)
-         (ctl (:bgc #x22222200)
+         (ctl (:pen :bgc #x22222200)
               (:clr 1 1 (rows *console*) (cols *console*))))))

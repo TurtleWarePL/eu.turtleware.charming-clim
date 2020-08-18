@@ -122,4 +122,9 @@
            (apply #'set-text-style dif)))
 
 
-(defclass pointer (cursor) ())
+(defclass pointer (cursor) ()
+  (:documentation "The terminal pointer."))
+
+(defmethod initialize-instance :after
+    ((instance pointer) &rest args)
+  (set-mouse-tracking t))
