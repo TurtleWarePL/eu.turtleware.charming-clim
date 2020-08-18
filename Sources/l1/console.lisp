@@ -35,7 +35,7 @@
                           (list (read)))
            (setf console-class new-console-class))))))
 
-(defclass console (buffer)
+(defclass console (output-buffer)
   ((ios :initarg :ios :accessor ios :documentation "Console I/O stream")
    (cur :initarg :cur :accessor cur :documentation "Drawing cursor")
    (ptr :initarg :ptr :accessor ptr :documentation "Pointer tracking")

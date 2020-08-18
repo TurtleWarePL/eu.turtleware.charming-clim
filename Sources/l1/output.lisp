@@ -5,7 +5,7 @@
 (defgeneric set-cell (buffer row col str fg bg))
 
 (defgeneric rnd (buffer))
-(defgeneric (setf rnd) (buffer mode)
+(defgeneric (setf rnd) (mode buffer)
   (:argument-precedence-order buffer mode))
 
 (defgeneric fgc (buffer))
@@ -101,7 +101,7 @@
                      :bg (bgc *buffer*)
                      :dirty-p t))
 
-(defclass buffer ()
+(defclass output-buffer ()
   ((fgc :initarg :fgc :accessor fgc :documentation "Foregorund color")
    (bgc :initarg :bgc :accessor bgc :documentation "Background color")
    (row :initarg :row :accessor row :documentation "Current row")
@@ -145,11 +145,11 @@
                     (incf ,ccol))
            finally (return (values ,crow ,ccol)))))
 
-(defmethod flush-output ((buffer buffer) &rest args)
+(defmethod flush-output ((buffer output-buffer) &rest args)
   (declare (ignore buffer args))
   #|whoosh|#)
 
-(defmethod put-cell ((buffer buffer) row col str fg bg)
+(defmethod put-cell ((buffer output-buffer) row col str fg bg)
   (warn "put-cell: default method does nothing!"))
 
 (defun get-cell (buf row col)
@@ -162,7 +162,7 @@
         (load-time-value
          (make-instance 'cell :ch #\space :fg #xffffff00 :bg #x00000000)))))
 
-(defmethod set-cell ((buf buffer) row col str fgc bgc)
+(defmethod set-cell ((buf output-buffer) row col str fgc bgc)
   (let ((rendering-mode (rnd buf))
         (row (or row (row buf)))
         (col (or col (col buf))))
@@ -184,13 +184,14 @@
     (when (member rendering-mode '(:dir :wrt))
       (put-cell buf row col str fgc bgc))))
 
-(defmethod inside-p ((buffer buffer) row col)
+(defmethod inside-p ((buffer output-buffer) row col)
   (let ((clip (clip buffer)))
     (and (<= (r1 clip) row (r2 clip))
          (<= (c1 clip) col (c2 clip))
          (funcall (fn clip) row col))))
 
-(defmethod invoke-with-clipping ((buffer buffer) cont &key r1 c1 r2 c2 fn)
+(defmethod invoke-with-clipping
+    ((buffer output-buffer) cont &key r1 c1 r2 c2 fn)
   (let ((clip (clip buffer)))
     (let ((old-r1 (r1 clip))
           (old-c1 (c1 clip))

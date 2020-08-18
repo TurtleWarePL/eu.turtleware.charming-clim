@@ -1,10 +1,10 @@
 (in-package #:eu.turtleware.charming-clim)
 
-(defclass surface (buffer bbox)
+(defclass surface (output-buffer bbox)
   ((sink :initarg :sink :accessor sink :documentation "Flush destination")
    (row0 :initarg :row0 :accessor row0 :documentation "Scroll row offset")
    (col0 :initarg :col0 :accessor col0 :documentation "Scroll col offset"))
-  (:default-initargs :row0 0 :col0 0))
+  (:default-initargs :row0 0 :col0 0 :sink *buffer*))
 
 (defmethod initialize-instance :after
     ((buf surface) &key data rows cols r1 c1 r2 c2)

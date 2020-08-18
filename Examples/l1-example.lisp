@@ -5,8 +5,7 @@
   (:default-initargs :frames nil))
 
 (defclass frame (l1:surface)
-  ()
-  (:default-initargs :sink l1:*buffer*))
+  ())
 
 (defclass noise-demo (frame)
   ())
