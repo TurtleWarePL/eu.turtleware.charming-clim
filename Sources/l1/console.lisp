@@ -37,27 +37,24 @@
 
 (defclass console (output-buffer)
   ((ios :initarg :ios :accessor ios :documentation "Console I/O stream")
-   (cur :initarg :cur :accessor cur :documentation "Drawing cursor")
-   (ptr :initarg :ptr :accessor ptr :documentation "Pointer tracking")
+   (cur :initarg :cur :accessor cur :documentation "Terminal cursor")
+   (ptr :initarg :ptr :accessor ptr :documentation "Pointer device")
    (fps :initarg :fps :accessor fps :documentation "Desired framerate")
    (hnd               :accessor hnd :documentation "Terminal handler"))
   (:default-initargs :ios (error "I/O stream must be specified.")
-                     :fgc #xffa0a000
-                     :bgc #x22222200
-                     :row 1 :col 1
-                     :ptr t :fps 10 :cvp nil))
+                     :ptr t :cvp t))
 
 (defmethod initialize-instance :after
-    ((instance console) &rest args &key fgc bgc row col cvp ptr)
+    ((instance console) &rest args &key cvp ptr)
   (setf (hnd instance) (init-terminal))
   (set-mouse-tracking ptr)
-  (setf (cur instance)
-        (make-instance 'cursor :fgc fgc :bgc bgc :row row :col col :cvp cvp))
+  (setf (cur instance) (make-instance 'cursor  :cvp cvp))
+  (setf (ptr instance) (make-instance 'pointer :cvp nil))
   (let ((*console* instance))
     (process-available-events t)))
 
 (defmethod (setf ptr) :after (ptr (instance console))
-  (set-mouse-tracking mouse-tracking (not (null ptr))))
+  (set-mouse-tracking (not (null ptr))))
 
 (defmethod flush-output ((buffer console) &rest args &key force)
   (declare (ignore args))
@@ -66,6 +63,7 @@
          (last-bg (bgc cursor))
          (gap 0))
     (set-cursor-position 1 1)
+    (set-cursor-visibility nil)
     (iterate-cells (cell crow ccol wrap-p)
         (buffer 1 1 (make-array (* (cols buffer)
                                    (rows buffer))
@@ -92,6 +90,7 @@
               (put #\space)
               (incf gap))))
     (set-cursor-position (row cursor) (col cursor))
+    (set-cursor-visibility (cvp cursor))
     (set-foreground-color (fgc cursor))
     (set-background-color (bgc cursor)))
   (finish-output *terminal*))
@@ -102,17 +101,18 @@
         (col (or col (col buf)))
         (fgc (or fgc (fgc buf)))
         (bgc (or bgc (bgc buf))))
-    (setf (cursor-position cur) (values row col))
-    (setf (cursor-colors   cur) (values fgc bgc))
+    (change-cursor-position cur row col)
+    (change-cursor-pen cursor :fgc fgc :bgc bgc)
     (multiple-value-bind (final-row final-col)
         (iterate-cells (ch crow ccol wrap-p)
             (buf row col (string str))
           (when wrap-p
-            (setf (cursor-position cur) (values crow ccol)))
+            (change-cursor-position cur crow ccol))
           (if (inside-p buf crow ccol)
               (put ch)
               (cursor-right)))
-      (update-cursor-position cur final-row final-col))))
+      (set-row final-row cur)
+      (set-col final-col cur))))
 
 (defmethod handle-event ((client console) (event terminal-resize-event))
   (let ((rows (rows event))
