@@ -16,10 +16,10 @@
   (l1:ctl (:clr 1 1
                 (eu.turtleware.charming-clim::rows l1:*console*)
                 (eu.turtleware.charming-clim::cols l1:*console*))
-          (:pen :fgc #xbbbbbb00 :bgc #x33333300))
+          (:ink #xbbbbbb00 #x33333300))
   (dolist (frame (frames fm))
     (handle-repaint frame))
-  (l1:ctl (:pen :fgc #xbbbbbb00 :bgc #x11111100)))
+  (l1:ctl (:ink #xbbbbbb00 #x11111100)))
 
 (defmethod handle-repaint ((frame frame))
   ;; Render decorations.
@@ -41,6 +41,7 @@
 
 (defmethod handle-repaint ((frame noise-demo))
   (call-next-method)
+  #+ (or)
   (l1:with-buffer (frame)
     (loop for row from 1 upto (eu.turtleware.charming-clim::rows frame)
           do (loop for col from 1 upto (eu.turtleware.charming-clim::cols frame)
