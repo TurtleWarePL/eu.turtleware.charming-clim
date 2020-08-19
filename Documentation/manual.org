@@ -338,9 +338,10 @@ the last pointer event.
 
 Not all terminal emulators allow tracking the pointer. In order to mitigate
 that state a virtual pointer is implemented which is manipualted by pressing
-the control key and a digit. When the pointer is disabled they are not
-interpreted. The associated data is a synthesized pointer event. It is
-possible for both pointer cursors to be enabled at the same time.
+the control key and (by default) the keypad function keys. When the pointer is
+disabled they are not interpreted. The associated data is a synthesized
+pointer event. It is possible for both pointer cursors to be enabled at the
+same time.
 
 ** Buffers
 

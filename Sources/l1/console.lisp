@@ -3,7 +3,8 @@
 (defvar *console*)
 
 (defmacro with-console ((&rest args
-                         &key ios
+                         &key
+                           (ios '*terminal-io*)
                            (console-class ''console)
                          &allow-other-keys)
                         &body body)
@@ -113,19 +114,11 @@
       (set-col final-col cur))))
 
 (defmethod handle-event ((client console) (event pointer-event))
-  (let ((ptr (ptr client)))
-    (when (cursor-enabledp ptr)
-      (let ((row (row event))
-            (col (col event)))
-        (change-cursor-position ptr row col)
-        (change-cursor-data ptr event)
-        (when (cursor-visiblep ptr)
-          (let ((pen (cursor-pen ptr)))
-            ;; (with-cursor-position (row col)
-            ;;   (put "X"))
-            ;(out (:row row :col col :fgc (fgc ptr) :bgc (bgc ptr)) "X")
-            (put-cell client row col "X" (fgc ptr) (bgc ptr))
-            (finish-output *terminal*)))))))
+  (let ((ptr (ptr client))
+        (row (row event))
+        (col (col event)))
+    (change-cursor-position ptr row col)
+    (change-cursor-data ptr event)))
 
 (defmethod handle-event ((client console) (event terminal-resize-event))
   (let ((rows (rows event))
