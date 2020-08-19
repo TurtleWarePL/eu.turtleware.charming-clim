@@ -14,11 +14,14 @@
 (defgeneric change-cursor-data (cursor data)
   (:documentation "Changes the cursor data."))
 
-(defgeneric change-cursor-pen (cursor &rest args
-                               &key fgc bgc
-                                 intensity underline italicized
-                                 crossout blink inverse invisible)
-  (:documentation "Changes the cursor pen properties."))
+(defgeneric change-cursor-inks (cursor fgc bgc)
+  (:documentation "Changes the cursor colors."))
+
+(defgeneric change-cursor-text (cursor &rest args
+                                &key
+                                  intensity underline italicized
+                                  crossout blink inverse invisible)
+  (:documentation "Changes the cursor text properties."))
 
 (defgeneric cursor-enabledp (cursor)
   (:documentation "Returns a flag whether the cursor is enabled."))
@@ -32,15 +35,19 @@
 (defgeneric cursor-data (cursor)
   (:documentation "Returns the cursor data."))
 
-(defgeneric cursor-pen (cursor)
-  (:documentation "Returns a plist with the pen properties."))
+(defgeneric cursor-inks (cursor)
+  (:documentation "Returns the cursor foreground and background colors."))
+
+(defgeneric cursor-text (cursor)
+  (:documentation "Returns a plist with the text properties."))
 
 
 ;;; This is a mixin class for the pen properties.
 (defclass drawing-style-mixin ()
   ((fgc :initarg :fgc :accessor fgc :documentation "Foreground color")
    (bgc :initarg :bgc :accessor bgc :documentation "Background color")
-   (txt :initarg :txt :accessor txt :documentation "Text properties"))
+   (txt :initarg :txt :accessor txt :documentation "Text properties"
+        :reader cursor-text))
   (:default-initargs :fgc #x222222ff :bgc #xddddddff
                      :txt '(:intensity :normal
                             :underline :none
@@ -50,23 +57,20 @@
                             :inverse    nil
                             :invisible  nil)))
 
-(defmethod change-cursor-pen ((pen drawing-style-mixin)
-                              &rest args)
-  (alexandria:when-let ((fgc (getf args :fgc)))
-    (setf (fgc pen) fgc)
-    (remf args :fgc))
-  (alexandria:when-let ((bgc (getf args :bgc)))
-    (setf (bgc pen) bgc)
-    (remf args :bgc))
+(defmethod change-cursor-inks ((pen drawing-style-mixin) fgc bgc)
+  (when fgc (setf (fgc pen) fgc))
+  (when bgc (setf (bgc pen) bgc)))
+
+(defmethod cursor-inks ((pen drawing-style-mixin))
+  (values (fgc pen) (bgc pen)))
+
+(defmethod change-cursor-text ((pen drawing-style-mixin) &rest args)
   (loop with txt = (txt pen)
         for (arg val) on args by #'cddr
         do (unless (eql val (getf txt arg))
              (setf (getf txt arg) val))
         finally
            (setf (txt pen) txt)))
-
-(defmethod cursor-pen ((pen drawing-style-mixin))
-  (list* :fgc (fgc pen) :bgc (bgc pen) (copy-list (txt pen))))
 
 (defclass cursor (drawing-style-mixin)
   ((cep :initarg :cep :reader cep :writer set-cep :reader cursor-enabledp)
@@ -120,17 +124,17 @@
     (when (or set-row-p set-col-p)
       (set-cursor-position row col))))
 
-(defmethod change-cursor-pen ((pen tcursor) &rest args)
-  (alexandria:when-let ((fgc (getf args :fgc)))
+(defmethod change-cursor-inks ((pen tcursor) fgc bgc)
+  (when fgc
     (unless (eql fgc (fgc pen))
       (set-foreground-color fgc)
-      (setf (fgc pen) fgc))
-    (remf args :fgc))
-  (alexandria:when-let ((bgc (getf args :bgc)))
+      (setf (fgc pen) fgc)))
+  (when bgc
     (unless (eql bgc (bgc pen))
       (set-background-color bgc)
-      (setf (bgc pen) bgc))
-    (remf args :bgc))
+      (setf (bgc pen) bgc))))
+
+(defmethod change-cursor-text ((pen tcursor) &rest args)
   (loop with txt = (txt pen)
         for (arg val) on args by #'cddr
         unless (eql val (getf txt arg))

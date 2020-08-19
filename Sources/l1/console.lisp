@@ -4,7 +4,7 @@
 
 (defmacro with-console ((&rest args
                          &key
-                           (ios '*terminal-io*)
+                           ios
                            (console-class ''console)
                          &allow-other-keys)
                         &body body)
@@ -21,11 +21,13 @@
                  (close-terminal (hnd *console*))
                  (error e))
                (exit (e)
+                 (declare (ignore e))
                  (set-mouse-tracking nil)
                  (process-available-events)
                  (close-terminal (hnd *console*))
                  (return))
                (:no-error (&rest values)
+                 (declare (ignore values))
                  (set-mouse-tracking nil)
                  (process-available-events)
                  (close-terminal (hnd *console*))
@@ -54,7 +56,7 @@
      &aux (*terminal* ios) (*console* instance))
   (setf (hnd instance) (init-terminal))
   (setf (cur instance) (make-instance 'tcursor :cvp t))
-  (setf (ptr instance) (make-instance 'pointer :cvp t))
+  (setf (ptr instance) (make-instance 'pointer :cvp t :cep nil))
   (process-available-events t))
 
 (defmethod flush-output ((buffer console) &rest args &key force)
@@ -101,7 +103,7 @@
          (fgc (or fgc (fgc cur)))
          (bgc (or bgc (bgc cur))))
     (change-cursor-position cur row col)
-    (change-cursor-pen cur :fgc fgc :bgc bgc)
+    (change-cursor-inks cur fgc bgc)
     (multiple-value-bind (final-row final-col)
         (iterate-cells (ch crow ccol wrap-p)
             (buf row col (string str))

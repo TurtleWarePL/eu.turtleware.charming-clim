@@ -8,6 +8,7 @@
 (defgeneric (setf mode) (mode buffer)
   (:argument-precedence-order buffer mode))
 
+(defgeneric bbox (object))
 (defgeneric rows (buffer))
 (defgeneric cols (buffer))
 
@@ -51,7 +52,8 @@
      ,@(loop for op in operations
              collect (destructuring-bind (name &rest args) op
                        (ecase name
-                         (:pen `(change-cursor-pen pen ,@args))
+                         (:txt `(change-cursor-text pen ,@args))
+                         (:ink `(change-cursor-inks pen ,@args))
                          (:pos `(change-cursor-position pen ,@args))
                          (:rnd `(setf (mode buf) ,@args))
                          (:clr `(clear-rectangle ,@args))
@@ -68,6 +70,9 @@
    (c1 :initarg :c1 :accessor c1)
    (r2 :initarg :r2 :accessor r2)
    (c2 :initarg :c2 :accessor c2)))
+
+(defmethod bbox ((o bbox))
+  (values (r1 o) (c1 o) (r2 o) (c2 0)))
 
 (defclass clip (bbox)
   ((fn :initarg :fn :accessor fn))
@@ -93,6 +98,9 @@
   (:default-initargs :mode :buf
                      :data (make-array (list 0 0) :adjustable t)
                      :clip (make-instance 'clip)))
+
+(defmethod bbox ((o output-buffer))
+  (values 1 1 (rows o) (cols o)))
 
 (defmacro iterate-cells ((ch crow ccol wrap)
                          (buf row col str)
