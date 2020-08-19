@@ -10,10 +10,10 @@
            #:clear-terminal
 
            #:clear-line
-           #:reset-text-style
            #:set-foreground-color
            #:set-background-color
            #:set-text-style
+           #:reset-cursor-attributes
 
            #:with-cursor-position
            #:set-cursor-position

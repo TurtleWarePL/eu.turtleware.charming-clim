@@ -84,9 +84,6 @@
     (declare (ignore a))
     (sgr "48;2;" r ";" g ";" b)))
 
-(defun reset-text-style ()
-  (csi "0" "m"))
-
 (defun set-text-style (&key
                          (intensity  nil intensity-p)
                          (italicized nil italicized-p)
@@ -95,27 +92,32 @@
                          (blink      nil blink-p)
                          (inverse    nil inverse-p)
                          (invisible  nil invisible-p))
-  (let ((numbers (list (and intensity-p
-                            (ecase intensity
-                              (:faint 2)
-                              (:normal 22)
-                              (:bold 1)))
-                       (and underline-p
-                            (ecase underline
-                              (:none 24)
-                              (:single  4)
-                              (:double 21)))
-                       (and italicized-p
-                            (if italicized 3 23))
-                       (and blink-p
-                            (if blink      5 25))
-                       (and inverse-p
-                            (if inverse    7 27))
-                       (and invisible-p
-                            (if invisible  8 28))
-                       (and crossout-p
-                            (if crossout   9 29)))))
-    (csi (format nil "~{~a~^;~}" (remove nil numbers)) "m")))
+  (let ((numbers (remove-if #'null
+                            (list (and intensity-p
+                                       (ecase intensity
+                                         (:faint 2)
+                                         (:normal 22)
+                                         (:bold 1)))
+                                  (and underline-p
+                                       (ecase underline
+                                         (:none 24)
+                                         (:single  4)
+                                         (:double 21)))
+                                  (and italicized-p
+                                       (if italicized 3 23))
+                                  (and blink-p
+                                       (if blink      5 25))
+                                  (and inverse-p
+                                       (if inverse    7 27))
+                                  (and invisible-p
+                                       (if invisible  8 28))
+                                  (and crossout-p
+                                       (if crossout   9 29))))))
+    (when numbers
+      (csi (format nil "~{~a~^;~}" (remove nil numbers)) "m"))))
+
+(defun reset-cursor-attributes ()
+  (csi "0" "m"))
 
 (defun save-cursor-position ()
   (csi "s"))
@@ -133,9 +135,9 @@
   (defun cursor-left  (&optional (n 1)) (moveit "D")))
 
 (defun set-cursor-position (row col)
-  (cond ((and row col)    (csi row ";" col "H"))
-        ((not (null row)) (csi row ";H"))
-        ((not (null col)) (csi ";" col "H"))))
+  (check-type row integer)
+  (check-type col integer)
+  (csi row ";" col "H"))
 
 (defmacro with-cursor-position ((row col) &body body)
   `(progn
