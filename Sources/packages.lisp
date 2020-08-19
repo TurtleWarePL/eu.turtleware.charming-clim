@@ -46,7 +46,7 @@
 (defpackage #:eu.turtleware.charming-clim/l1
   (:export #:*console* #:*buffer*)
   (:export #:with-console #:with-buffer #:out #:ctl)
-  (:export #:process-available-events #:exit)
+  (:export #:process-next-event #:process-available-events #:exit)
   (:export #:console #:surface #:handle-event))
 
 (defpackage #:eu.turtleware.charming-clim/l2

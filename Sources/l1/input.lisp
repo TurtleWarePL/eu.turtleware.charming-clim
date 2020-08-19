@@ -14,7 +14,7 @@
           with *request-terminal-size* = t
           for event = (process-next-event nil)
           do (unless event
-               (sleep .1))
+               (sleep .01))
           until (or (typep event 'terminal-resize-event)
                     (> (get-universal-time) deadline)))))
 

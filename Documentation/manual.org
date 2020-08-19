@@ -17,7 +17,12 @@ exclusive) APIs which are layered on top of each other.
 
 This manual will go through each abstraction and explain how to use it.
 
-* Level 0: Terminal Manipulation
+* Level 0: Terminal
+
+The terminal is our application's peer on the other side of the stream.
+Hopefully it is a terminal emulator which implements common extensions like
+the pointer events so it may be configured and used as an interaction device
+with the user.
 
 ** Initializing the terminal
 
@@ -263,3 +268,84 @@ Depending on the state, the exact event class is one of
 ~pointer-motion-event~, ~pointer-press-event~ or
 ~pointer-release-event~. These classes are specified for the programmer
 convenience and inherit from the class ~pointer-event~.
+
+* Level 1: Console
+
+The console is an instance of the class ~console~ which is used as an
+intermediate between the programmer and the terminal. Its purpose is to
+maintain the current terminal state in the application memory, abstract away
+common operations and minimize the I/O bandwidth.
+
+** Initializing the console
+
+The quickest way to start working with a console is to initialize it and draw
+a things on it. To create a console use the macro ~with-console~:
+
+#+BEGIN_SRC lisp
+(l1:with-console (:ios *terminal-io* :mode :dir)
+  (l1:out (:row 4 :col 8) "Hello world!")
+  (l1:process-next-event t)
+  (l1:exit))
+#+END_SRC
+
+The macro estabilishes a dynamic context in which the input is remembered (see
+the section "Cursors") and the output may be buffered based on the rendering
+mode (see the section "Buffers").
+
+Input is read with the function ~process-next-event~ which has the same
+semantics as the function ~read-input~ in the level 0 abstraction and should
+be called instead (because it also updates the console state).
+
+** Cursors
+
+Cursors may have multiple purposes:
+
+- pen      :: drawing style
+- position :: current row and column
+- input    :: store user gestures
+- marker   :: signify input areas
+- pointer  :: select an element
+
+The cursor protocol:
+
+- cursor-enabledp, change-cursor-enabledp   :: gf
+- cursor-visiblep, change-cursor-visiblep   :: gf
+- cursor-position, change-cursor-position   :: gf
+- cursor-pen,      change-cursor-pen        :: gf
+- cursor-data,     change-cursor-data       :: gf
+- cursor :cep :cvp :row :col :fgc :bgc :txt :: class and initargs
+
+It is up to the buffer owning the cursor to update its state and to honor
+flags like ~enabledp~ or ~visiblep~. The console maintains three
+special-purpose cursors.
+
+*** Terminal cursor
+
+This cursor represents the physical terminal's cursor. The cursor is moved
+when drawing on the terminal is performed, so if the cursor is visible it will
+move across the screen when a buffered output is flushed. The original cursor
+position is restored after ~flush-output~, but not after ~put-cell~, which
+advances the cursor accordingly. The terminal cursor is always enabled and has
+no associated data.
+
+*** Pointer cursor
+
+The pointer cursor maintains the last state of the pointer reported by the
+terminal. Enabling the pointer sets the mouse tracking. The associated data is
+the last pointer event.
+
+*** Virtual pointer cursor
+
+Not all terminal emulators allow tracking the pointer. In order to mitigate
+that state a virtual pointer is implemented which is manipualted by pressing
+the control key and a digit. When the pointer is disabled they are not
+interpreted. The associated data is a synthesized pointer event. It is
+possible for both pointer cursors to be enabled at the same time.
+
+** Buffers
+
+*** Console
+*** Surface
+
+
+

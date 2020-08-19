@@ -4,8 +4,8 @@
 (defgeneric put-cell (buffer row col str fg bg))
 (defgeneric set-cell (buffer row col str fg bg))
 
-(defgeneric rend (buffer))
-(defgeneric (setf rend) (mode buffer)
+(defgeneric mode (buffer))
+(defgeneric (setf mode) (mode buffer)
   (:argument-precedence-order buffer mode))
 
 (defgeneric rows (buffer))
@@ -46,14 +46,14 @@
 
 (defmacro ctl (&rest operations)
   `(let* ((buf *buffer*)
-          (pen (bcur buf)))
+          (pen (cur buf)))
      (declare (ignorable buf pen))
      ,@(loop for op in operations
              collect (destructuring-bind (name &rest args) op
                        (ecase name
                          (:pen `(change-cursor-pen pen ,@args))
                          (:pos `(change-cursor-position pen ,@args))
-                         (:rnd `(setf (rend buf) ,@args))
+                         (:rnd `(setf (mode buf) ,@args))
                          (:clr `(clear-rectangle ,@args))
                          (:fls `(flush-output buf ,@args)))))))
 
@@ -80,19 +80,17 @@
    (bg :initarg :bg :accessor bg)
    (dirty-p :initarg :dirty-p :accessor dirty-p))
   (:default-initargs :ch #\space
-                     :fg (fgc (bcur *buffer*))
-                     :bg (bgc (bcur *buffer*))
+                     :fg (fgc (cur *buffer*))
+                     :bg (bgc (cur *buffer*))
                      :dirty-p t))
 
 (defclass output-buffer ()
-  ((bcur :initarg :bcur :accessor bcur :documentation "Buffer cursor")
-   (rend :initarg :rend :accessor rend :documentation "Rendering mode")
+  ((mode :initarg :mode :accessor mode :documentation "Rendering mode")
    (clip :initarg :clip :accessor clip :documentation "Clipping object")
    (data :initarg :data :accessor data :documentation "Data buffer")
    (rows :initarg :rows :accessor rows :documentation "Buffer number of rows")
    (cols :initarg :cols :accessor cols :documentation "Buffer number of cols"))
-  (:default-initargs :bcur (make-instance 'cursor)
-                     :rend :buf
+  (:default-initargs :mode :buf
                      :data (make-array (list 0 0) :adjustable t)
                      :clip (make-instance 'clip)))
 
@@ -140,8 +138,8 @@
          (make-instance 'cell :ch #\space :fg #xffffff00 :bg #x00000000)))))
 
 (defmethod set-cell ((buf output-buffer) row col str fgc bgc)
-  (let ((pen (bcur buf))
-        (rendering-mode (rend buf))
+  (let ((pen (cur buf))
+        (rendering-mode (mode buf))
         (row (or row (row pen)))
         (col (or col (col pen))))
     (iterate-cells (ch crow ccol wrap-p)

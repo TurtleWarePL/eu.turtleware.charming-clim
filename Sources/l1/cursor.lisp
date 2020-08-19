@@ -2,11 +2,17 @@
 
 ;;; Cursor protocol:
 
+(defgeneric change-cursor-enabledp (cursor enabledp)
+  (:documentation "Changes the cursor state."))
+
 (defgeneric change-cursor-visiblep (cursor visiblep)
   (:documentation "Changes the cursor visibility."))
 
 (defgeneric change-cursor-position (cursor row col)
   (:documentation "Changes the cursor position."))
+
+(defgeneric change-cursor-data (cursor data)
+  (:documentation "Changes the cursor data."))
 
 (defgeneric change-cursor-pen (cursor &rest args
                                &key fgc bgc
@@ -14,11 +20,17 @@
                                  crossout blink inverse invisible)
   (:documentation "Changes the cursor pen properties."))
 
+(defgeneric cursor-enabledp (cursor)
+  (:documentation "Returns a flag whether the cursor is enabled."))
+
 (defgeneric cursor-visiblep (cursor)
   (:documentation "Returns a flag whether the cursor is visible."))
 
 (defgeneric cursor-position (cursor)
   (:documentation "Returns two values: current ROW and COL."))
+
+(defgeneric cursor-data (cursor)
+  (:documentation "Returns the cursor data."))
 
 (defgeneric cursor-pen (cursor)
   (:documentation "Returns a plist with the pen properties."))
@@ -57,12 +69,18 @@
   (list* :fgc (fgc pen) :bgc (bgc pen) (copy-list (txt pen))))
 
 (defclass cursor (drawing-style-mixin)
-  ((cvp :initarg :cvp :reader cvp :writer set-cvp)
+  ((cep :initarg :cep :reader cep :writer set-cep :reader cursor-enabledp)
+   (cvp :initarg :cvp :reader cvp :writer set-cvp :reader cursor-visiblep)
    (row :initarg :row :reader row :writer set-row)
-   (col :initarg :col :reader col :writer set-col))
-  (:default-initargs :cvp nil
+   (col :initarg :col :reader col :writer set-col)
+   (obj :initarg :obj :reader obj :writer set-obj :reader cursor-data))
+  (:default-initargs :cep t
+                     :cvp nil
                      :row 1
                      :col 1))
+
+(defmethod change-cursor-enabledp ((cur cursor) enabledp)
+  (set-cep enabledp cur))
 
 (defmethod change-cursor-visiblep ((cur cursor) visiblep)
   (set-cvp visiblep cur))
@@ -71,14 +89,21 @@
   (set-row row cur)
   (set-col col cur))
 
+(defmethod cursor-position ((cur cursor))
+  (values (row cur) (col cur)))
+
+(defmethod change-cursor-data ((cur cursor) data)
+  (set-obj data cur))
+
 
 (defclass tcursor (cursor) ()
   (:documentation "The terminal cursor."))
 
 (defmethod initialize-instance :after
     ((instance tcursor) &rest args
-     &key row col cvp fgc bgc txt)
+     &key row col cep cvp fgc bgc txt)
   (declare (ignore args))
+  (set-cursor-position row col)
   (set-cursor-visibility cvp)
   (set-cursor-position row col)
   (set-foreground-color fgc)
@@ -92,15 +117,10 @@
 (defmethod change-cursor-position :before ((cur tcursor) row col)
   (let ((set-row-p (not (eql (row cur) row)))
         (set-col-p (not (eql (col cur) col))))
-    (cond ((and set-row-p set-col-p)
-           (set-cursor-position row col))
-          (set-row-p
-           (set-cursor-position row nil))
-          (set-col-p
-           (set-cursor-position nil col)))))
+    (when (or set-row-p set-col-p)
+      (set-cursor-position row col))))
 
-(defmethod change-cursor-pen ((pen drawing-style-mixin)
-                              &rest args)
+(defmethod change-cursor-pen ((pen tcursor) &rest args)
   (alexandria:when-let ((fgc (getf args :fgc)))
     (unless (eql fgc (fgc pen))
       (set-foreground-color fgc)
@@ -123,8 +143,16 @@
 
 
 (defclass pointer (cursor) ()
-  (:documentation "The terminal pointer."))
+  (:documentation "The pointer.")
+  (:default-initargs :fgc #xff8888ff :bgc #x88ffffff))
 
 (defmethod initialize-instance :after
     ((instance pointer) &rest args)
-  (set-mouse-tracking t))
+  (set-mouse-tracking (cursor-enabledp instance)))
+
+(defmethod change-cursor-enabledp :before ((cur pointer) enabledp)
+  (unless (eq enabledp (cursor-enabledp instance))
+    (set-mouse-tracking enabledp)))
+
+(defclass vpointer (cursor) ()
+  (:documentation "The virtual pointer."))
