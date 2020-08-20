@@ -80,7 +80,8 @@
   (:default-initargs :cep t
                      :cvp nil
                      :row 1
-                     :col 1))
+                     :col 1
+                     :obj nil))
 
 (defmethod change-cursor-enabledp ((cur cursor) enabledp)
   (set-cep enabledp cur))

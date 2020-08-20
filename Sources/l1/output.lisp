@@ -156,29 +156,40 @@
         (load-time-value
          (make-instance 'cell :ch #\space :fg #xffffff00 :bg #x00000000)))))
 
+;;; All calls to this function iterate over the buffer and update the cell
+;;; "dirty" status. Depending on the buffer's mode different things happen:
+;;;
+;;; - direct :: the cell's dirty status is updated
+;;; - buffer :: whole cell is updated
+;;; - write-through :: whole cell is updated (and marked as not dirty)
+;;;
+;;; When the mode is either direct or write-through then the function put-cell
+;;; is called with the same buffer and string, cursor-args are merged with the
+;;; buffer's cursor and passed along.
 (defmethod set-cell ((buf output-buffer) str
                      &rest cursor-args
                      &key row col fgc bgc &allow-other-keys)
-  (let ((pen (bcur buf))
-        (rendering-mode (mode buf))
-        (row (or row (row pen)))
-        (col (or col (col pen))))
+  (let* ((bcur (bcur buf))
+         (mode (mode buf))
+         (row (or row (row bcur)))
+         (col (or col (col bcur)))
+         (fgc (or fgc (fgc bcur)))
+         (bgc (or bgc (bgc bcur))))
     (iterate-cells (ch crow ccol wrap-p)
         (buf row col (string str))
       (when (inside-p buf crow ccol)
         (let* ((cell (get-cell buf crow ccol))
-               (clean (and (not (dirty-p cell))
-                           (eql ch (ch cell))
-                           (eql fgc (fg cell))
-                           (eql bgc (bg cell)))))
-          (unless clean
+               (clean (or (eq mode :wrt)
+                          (and (not (dirty-p cell))
+                               (eql ch (ch cell))
+                               (eql fgc (fg cell))
+                               (eql bgc (bg cell))))))
+          (setf (dirty-p cell) (not clean))
+          (unless (eq mode :dir)
             (setf (ch cell) ch
-                  (fg cell) (or fgc (fgc pen))
-                  (bg cell) (or bgc (bgc pen))))
-          (setf (dirty-p cell)
-                (and (not clean)
-                     (not (eq rendering-mode :wrt)))))))
-    (when (member rendering-mode '(:dir :wrt))
+                  (fg cell) fgc
+                  (bg cell) bgc)))))
+    (when (member mode '(:dir :wrt))
       (apply #'put-cell buf str cursor-args))))
 
 (defmethod put-cell ((buffer output-buffer) str &rest cursor-args)
