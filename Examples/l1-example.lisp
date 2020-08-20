@@ -22,11 +22,8 @@
   (l1:ctl (:ink #xbbbbbb00 #x11111100)))
 
 (defmethod handle-repaint ((frame frame))
-  ;; Render decorations.
-  (let ((r1 (eu.turtleware.charming-clim::r1 frame))
-        (c1 (eu.turtleware.charming-clim::c1 frame))
-        (r2 (eu.turtleware.charming-clim::r2 frame))
-        (c2 (eu.turtleware.charming-clim::c2 frame)))
+  (multiple-value-bind (r1 c1 r2 c2) (l1:bbox frame)
+    ;; Render decorations.
     (l1:ctl (:clr r1 c1 r2 c2))
     (loop with col = (1+ c2)
           for row from (1+ r1) upto (1- r2)
@@ -41,7 +38,6 @@
 
 (defmethod handle-repaint ((frame noise-demo))
   (call-next-method)
-  #+ (or)
   (l1:with-buffer (frame)
     (loop for row from 1 upto (eu.turtleware.charming-clim::rows frame)
           do (loop for col from 1 upto (eu.turtleware.charming-clim::cols frame)
@@ -67,7 +63,7 @@
           do (l1:process-available-events)
           do (handle-repaint fm)
           do (l1:ctl (:fls))
-          do (sleep .1))))
+          do (sleep .5))))
 
 (defun start-l1 ()
   (l1:with-console (:ios *terminal-io*

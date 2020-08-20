@@ -41,7 +41,6 @@
 (defgeneric cursor-text (cursor)
   (:documentation "Returns a plist with the text properties."))
 
-
 ;;; This is a mixin class for the pen properties.
 (defclass drawing-style-mixin ()
   ((fgc :initarg :fgc :accessor fgc :documentation "Foreground color")

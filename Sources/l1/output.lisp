@@ -1,8 +1,11 @@
 (in-package #:eu.turtleware.charming-clim)
 
+(defgeneric buffer-cursor (buffer))
+(defgeneric direct-cursor (buffer))
+
 (defgeneric flush-output (buffer &rest args))
-(defgeneric put-cell (buffer row col str fg bg))
-(defgeneric set-cell (buffer row col str fg bg))
+(defgeneric put-cell (buffer str &rest cursor-args))
+(defgeneric set-cell (buffer str &rest cursor-args))
 
 (defgeneric mode (buffer))
 (defgeneric (setf mode) (mode buffer)
@@ -40,24 +43,29 @@
 (defmacro with-buffer ((object) &body body)
   `(let ((*buffer* ,object)) ,@body))
 
-(defmacro out ((&key row col fgc bgc) object)
-  `(let ((buf *buffer*)
-         (str (princ-to-string ,object)))
-     (set-cell buf ,row ,col str ,fgc ,bgc)))
+(defmacro out ((&rest cursor-args) object)
+  `(set-cell *buffer* (princ-to-string ,object) ,@cursor-args))
 
 (defmacro ctl (&rest operations)
-  `(let* ((buf *buffer*)
-          (pen (cur buf)))
-     (declare (ignorable buf pen))
-     ,@(loop for op in operations
-             collect (destructuring-bind (name &rest args) op
-                       (ecase name
-                         (:txt `(change-cursor-text pen ,@args))
-                         (:ink `(change-cursor-inks pen ,@args))
-                         (:pos `(change-cursor-position pen ,@args))
-                         (:rnd `(setf (mode buf) ,@args))
-                         (:clr `(clear-rectangle ,@args))
-                         (:fls `(flush-output buf ,@args)))))))
+  (let ((operations
+          (loop for op in operations
+                collect (destructuring-bind (name &rest args) op
+                          (ecase name
+                            (:txt `(change-cursor-text pen ,@args))
+                            (:ink `(change-cursor-inks pen ,@args))
+                            (:pos `(change-cursor-position pen ,@args))
+                            (:clr `(clear-rectangle ,@args))
+                            (:fls `(flush-output buf ,@args)))))))
+    `(let ((buf *buffer*))
+       (ecase (mode buf)
+         ((:buf :wrt)
+          (let ((pen (buffer-cursor buf)))
+            (declare (ignorable pen))
+            ,@operations))
+         (:dir
+          (let ((pen (direct-cursor buf)))
+            (declare (ignorable pen))
+            ,@operations))))))
 
 (defun clear-rectangle (r1 c1 r2 c2)
   (loop with str = (make-string (1+ (- c2 c1)) :initial-element #\space)
@@ -72,7 +80,7 @@
    (c2 :initarg :c2 :accessor c2)))
 
 (defmethod bbox ((o bbox))
-  (values (r1 o) (c1 o) (r2 o) (c2 0)))
+  (values (r1 o) (c1 o) (r2 o) (c2 o)))
 
 (defclass clip (bbox)
   ((fn :initarg :fn :accessor fn))
@@ -85,12 +93,14 @@
    (bg :initarg :bg :accessor bg)
    (dirty-p :initarg :dirty-p :accessor dirty-p))
   (:default-initargs :ch #\space
-                     :fg (fgc (cur *buffer*))
-                     :bg (bgc (cur *buffer*))
+                     :fg (fgc (bcur *buffer*))
+                     :bg (bgc (bcur *buffer*))
                      :dirty-p t))
 
 (defclass output-buffer ()
-  ((mode :initarg :mode :accessor mode :documentation "Rendering mode")
+  ((bcur :initarg :bcur :accessor bcur :documentation "Buffer's cursor"
+         :reader buffer-cursor)
+   (mode :initarg :mode :accessor mode :documentation "Rendering mode")
    (clip :initarg :clip :accessor clip :documentation "Clipping object")
    (data :initarg :data :accessor data :documentation "Data buffer")
    (rows :initarg :rows :accessor rows :documentation "Buffer number of rows")
@@ -98,6 +108,10 @@
   (:default-initargs :mode :buf
                      :data (make-array (list 0 0) :adjustable t)
                      :clip (make-instance 'clip)))
+
+(defmethod initialize-instance :after ((buf output-buffer) &key bcur)
+  (unless bcur
+    (setf (bcur buf) (make-instance 'cursor))))
 
 (defmethod bbox ((o output-buffer))
   (values 1 1 (rows o) (cols o)))
@@ -132,9 +146,6 @@
   (declare (ignore buffer args))
   #|whoosh|#)
 
-(defmethod put-cell ((buffer output-buffer) row col str fg bg)
-  (warn "put-cell: default method does nothing!"))
-
 (defun get-cell (buf row col)
   (let ((data (data buf))
         (i0 (1- row))
@@ -145,8 +156,10 @@
         (load-time-value
          (make-instance 'cell :ch #\space :fg #xffffff00 :bg #x00000000)))))
 
-(defmethod set-cell ((buf output-buffer) row col str fgc bgc)
-  (let ((pen (cur buf))
+(defmethod set-cell ((buf output-buffer) str
+                     &rest cursor-args
+                     &key row col fgc bgc &allow-other-keys)
+  (let ((pen (bcur buf))
         (rendering-mode (mode buf))
         (row (or row (row pen)))
         (col (or col (col pen))))
@@ -166,7 +179,10 @@
                 (and (not clean)
                      (not (eq rendering-mode :wrt)))))))
     (when (member rendering-mode '(:dir :wrt))
-      (put-cell buf row col str fgc bgc))))
+      (apply #'put-cell buf str cursor-args))))
+
+(defmethod put-cell ((buffer output-buffer) str &rest cursor-args)
+  (warn "put-cell: default method does nothing!"))
 
 (defmethod inside-p ((buffer output-buffer) row col)
   (let ((clip (clip buffer)))

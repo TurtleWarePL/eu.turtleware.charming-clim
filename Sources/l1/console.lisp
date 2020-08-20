@@ -45,7 +45,8 @@
 
 (defclass console (output-buffer)
   ((ios :initarg :ios :accessor ios :documentation "Console I/O stream")
-   (cur :initarg :cur :accessor cur :documentation "The terminal cursor")
+   (cur :initarg :cur :accessor cur :documentation "The terminal cursor"
+        :reader direct-cursor)
    (ptr :initarg :ptr :accessor ptr :documentation "The pointer cursor")
    (vrt :initarg :vrt :accessor vrt :documentation "The virtual pointer cursor")
    (hnd               :accessor hnd :documentation "Terminal handler"))
@@ -96,7 +97,9 @@
     (set-background-color (bgc cursor)))
   (finish-output *terminal*))
 
-(defmethod put-cell ((buf console) row col str fgc bgc)
+(defmethod put-cell ((buf console) str
+                     &rest cursor-args
+                     &key row col fgc bgc &allow-other-keys)
   (let* ((cur (cur buf))
          (row (or row (row cur)))
          (col (or col (col cur)))

@@ -300,24 +300,27 @@ be called instead (because it also updates the console state).
 
 Cursors may have multiple purposes:
 
-- pen      :: drawing style
-- position :: current row and column
-- input    :: store user gestures
-- marker   :: signify input areas
-- pointer  :: select an element
+- pen      :: defines a drawing style
+- position :: stores current row and column
+- input    :: store data associated with a cursor
+- marker   :: direct user attention at the cell
+- pointer  :: select a cell on the screen
 
 The cursor protocol:
 
 - cursor-enabledp, change-cursor-enabledp   :: gf
 - cursor-visiblep, change-cursor-visiblep   :: gf
 - cursor-position, change-cursor-position   :: gf
-- cursor-pen,      change-cursor-pen        :: gf
+- cursor-inks,     change-cursor-inks       :: gf
+- cursor-text,     change-cursor-text       :: gf
 - cursor-data,     change-cursor-data       :: gf
 - cursor :cep :cvp :row :col :fgc :bgc :txt :: class and initargs
 
 It is up to the buffer owning the cursor to update its state and to honor
-flags like ~enabledp~ or ~visiblep~. The console maintains three
-special-purpose cursors.
+flags like ~enabledp~ or ~visiblep~. The console maintains a few special
+purpose cursors: the terminal cursor, the pointer cursor and the virtual
+pointer cursor. Additionally at least two cursors are associated with each
+buffer: a buffer cursor and a direct cursor.
 
 *** Terminal cursor
 
@@ -342,6 +345,25 @@ the control key and (by default) the keypad function keys. When the pointer is
 disabled they are not interpreted. The associated data is a synthesized
 pointer event. It is possible for both pointer cursors to be enabled at the
 same time.
+
+*** Buffer cursor
+
+Each buffer has its own private cursor which is used in buffered and
+write-through rendering mode.
+
+*** Direct cursor
+
+This abstraction level allows both buffered and direct writes. A direct cursor
+is the cursor which performs direct operations (from the buffer perspective)
+unlike the buffer cursor which writes to its internal memory. Direct cursor is
+used when flushing an output and in direct and write-through rendering mode.
+
+For console a direct cursor is the terminal cursor. For a surface it is its
+sink's current cursor and depends on the rendering mode of the sink:
+
+- dir :: sink's direct cursor
+- buf :: sink's buffer cursor
+- wrt :: sink's buffer cursor
 
 ** Buffers
 
