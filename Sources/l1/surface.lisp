@@ -54,9 +54,10 @@
         do (loop for col from 1 upto (cols buffer)
                  for cell = (get-cell buffer row col)
                  when (or force (dirty-p cell))
-                   do (put-cell buffer (ch cell) :row row :col col
-                                                 :fgc (fg cell)
-                                                 :bgc (bg cell))
+                   do (put-cell buffer (chr cell) :row row
+                                                  :col col
+                                                  :fgc (fgc cell)
+                                                  :bgc (bgc cell))
                       (setf (dirty-p cell) nil))))
 
 (defun move-to-row (buf row0)

@@ -87,14 +87,12 @@
   (:default-initargs :r1 1 :c1 1 :r2 24 :c2 80
                      :fn (constantly t)))
 
-(defclass cell ()
-  ((ch :initarg :ch :accessor ch)
-   (fg :initarg :fg :accessor fg)
-   (bg :initarg :bg :accessor bg)
+(defclass cell (drawing-style-mixin)
+  ((chr :initarg :chr :accessor chr)
    (dirty-p :initarg :dirty-p :accessor dirty-p))
-  (:default-initargs :ch #\space
-                     :fg (fgc (bcur *buffer*))
-                     :bg (bgc (bcur *buffer*))
+  (:default-initargs :chr #\space
+                     :fgc (fgc (bcur *buffer*))
+                     :bgc (bgc (bcur *buffer*))
                      :dirty-p t))
 
 (defclass output-buffer ()
@@ -116,7 +114,7 @@
 (defmethod bbox ((o output-buffer))
   (values 1 1 (rows o) (cols o)))
 
-(defmacro iterate-cells ((ch crow ccol wrap)
+(defmacro iterate-cells ((chr crow ccol wrap)
                          (buf row col str)
                          &body body)
   (alexandria:with-gensyms (cols rows)
@@ -125,10 +123,10 @@
            with ,crow = ,row
            with ,ccol = ,col
            with ,wrap = nil
-           for ,ch across ,str
+           for ,chr across ,str
            do (progn ,@body)
               (setf ,wrap nil)
-           if (eql ,ch #\newline)
+           if (eql ,chr #\newline)
              do (setf ,ccol 1
                       ,wrap t)
                 (if (= ,crow ,rows)
@@ -154,7 +152,7 @@
         (or (aref data i0 i1)
             (setf (aref data i0 i1) (make-instance 'cell)))
         (load-time-value
-         (make-instance 'cell :ch #\space :fg #xffffff00 :bg #x00000000)))))
+         (make-instance 'cell :chr #\space :fgc #xffffff00 :bgc #x00000000)))))
 
 ;;; All calls to this function iterate over the buffer and update the cell
 ;;; "dirty" status. Depending on the buffer's mode different things happen:
@@ -175,20 +173,20 @@
          (col (or col (col bcur)))
          (fgc (or fgc (fgc bcur)))
          (bgc (or bgc (bgc bcur))))
-    (iterate-cells (ch crow ccol wrap-p)
+    (iterate-cells (chr crow ccol wrap-p)
         (buf row col (string str))
       (when (inside-p buf crow ccol)
         (let* ((cell (get-cell buf crow ccol))
                (clean (or (eq mode :wrt)
                           (and (not (dirty-p cell))
-                               (eql ch (ch cell))
-                               (eql fgc (fg cell))
-                               (eql bgc (bg cell))))))
+                               (eql chr (chr cell))
+                               (eql fgc (fgc cell))
+                               (eql bgc (bgc cell))))))
           (setf (dirty-p cell) (not clean))
           (unless (eq mode :dir)
-            (setf (ch cell) ch
-                  (fg cell) fgc
-                  (bg cell) bgc)))))
+            (setf (chr cell) chr
+                  (fgc cell) fgc
+                  (bgc cell) bgc)))))
     (when (member mode '(:dir :wrt))
       (apply #'put-cell buf str cursor-args))))
 
