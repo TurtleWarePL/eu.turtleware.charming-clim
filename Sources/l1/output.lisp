@@ -103,13 +103,16 @@
    (data :initarg :data :accessor data :documentation "Data buffer")
    (rows :initarg :rows :accessor rows :documentation "Buffer number of rows")
    (cols :initarg :cols :accessor cols :documentation "Buffer number of cols"))
-  (:default-initargs :mode :buf
+  (:default-initargs :fgc #x000000ff
+                     :bgc #x88ff88ff
+                     :mode :buf
                      :data (make-array (list 0 0) :adjustable t)
                      :clip (make-instance 'clip)))
 
-(defmethod initialize-instance :after ((buf output-buffer) &key bcur)
+(defmethod initialize-instance :after ((buf output-buffer)
+                                       &key bcur bgc fgc)
   (unless bcur
-    (setf (bcur buf) (make-instance 'cursor))))
+    (setf (bcur buf) (make-instance 'cursor :fgc fgc :bgc bgc))))
 
 (defmethod bbox ((o output-buffer))
   (values 1 1 (rows o) (cols o)))
@@ -164,31 +167,35 @@
 ;;; When the mode is either direct or write-through then the function put-cell
 ;;; is called with the same buffer and string, cursor-args are merged with the
 ;;; buffer's cursor and passed along.
+;;;
+;;; If someone wants to perform direct writes without updating the internal
+;;; buffer, then put-cell could be used, however then flush-output may not
+;;; recognize dirty regions and the force flag may be necessary.
 (defmethod set-cell ((buf output-buffer) str
-                     &rest cursor-args
-                     &key row col fgc bgc &allow-other-keys)
+                     &rest cursor-args)
   (let* ((bcur (bcur buf))
-         (mode (mode buf))
-         (row (or row (row bcur)))
-         (col (or col (col bcur)))
-         (fgc (or fgc (fgc bcur)))
-         (bgc (or bgc (bgc bcur))))
-    (iterate-cells (chr crow ccol wrap-p)
-        (buf row col (string str))
-      (when (inside-p buf crow ccol)
-        (let* ((cell (get-cell buf crow ccol))
-               (clean (or (eq mode :wrt)
-                          (and (not (dirty-p cell))
-                               (eql chr (chr cell))
-                               (eql fgc (fgc cell))
-                               (eql bgc (bgc cell))))))
-          (setf (dirty-p cell) (not clean))
-          (unless (eq mode :dir)
-            (setf (chr cell) chr
-                  (fgc cell) fgc
-                  (bgc cell) bgc)))))
+         (mode (mode buf)))
+    (apply #'update-pen bcur cursor-args)
+    (let ((row (row bcur))
+          (col (col bcur))
+          (fgc (fgc bcur))
+          (bgc (bgc bcur)))
+     (iterate-cells (chr crow ccol wrap-p)
+         (buf row col (string str))
+       (when (inside-p buf crow ccol)
+         (let* ((cell (get-cell buf crow ccol))
+                (clean (or (eq mode :wrt)
+                           (and (not (dirty-p cell))
+                                (eql chr (chr cell))
+                                (eql fgc (fgc cell))
+                                (eql bgc (bgc cell))))))
+           (setf (dirty-p cell) (not clean))
+           (unless (eq mode :dir)
+             (setf (chr cell) chr
+                   (fgc cell) fgc
+                   (bgc cell) bgc))))))
     (when (member mode '(:dir :wrt))
-      (apply #'put-cell buf str cursor-args))))
+      (apply #'put-cell buf str (return-pen bcur)))))
 
 (defmethod put-cell ((buffer output-buffer) str &rest cursor-args)
   (warn "put-cell: default method does nothing!"))

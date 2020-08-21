@@ -99,6 +99,18 @@
 (defmethod change-cursor-data ((cur cursor) data)
   (set-obj data cur))
 
+;;; Helper functions
+
+(defun update-pen (cursor &key row col fgc bgc txt)
+  (change-cursor-position cursor row col)
+  (change-cursor-inks cursor fgc bgc)
+  (apply #'change-cursor-text cursor txt))
+
+(defun return-pen (cursor)
+  (multiple-value-bind (row col) (cursor-position cursor)
+    (multiple-value-bind (fgc bgc) (cursor-inks cursor)
+      (list :row row :col col :fgc fgc :bgc bgc :txt (cursor-text cursor)))))
+
 
 (defclass tcursor (cursor) ()
   (:documentation "The terminal cursor."))

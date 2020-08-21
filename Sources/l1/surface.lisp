@@ -31,22 +31,24 @@
           (c2 clip) cols))
   (adjust-array (data buf) (list rows cols) :initial-element nil))
 
+;;; update cursor!
 (defmethod put-cell ((buf surface) str
                      &rest cursor-args
-                     &key row col &allow-other-keys)
-  ;; We should use iterate-cells here!
+                     &key row col &allow-other-keys
+                     &aux (sink (sink buf)))
+  (remf cursor-args :row)
+  (remf cursor-args :col)
   (multiple-value-bind (r1 c1 r2 c2) (bbox buf)
-    (let ((vrow (- (+ r1 row) (row0 buf) 1))
-          (vcol (- (+ c1 col) (col0 buf) 1))
-          (size (+ (- c2 c1) 1))
-          (str (string str)))
-      (when (and (<= r1 vrow r2)
-                 (<= c1 vcol c2))
-        (remf cursor-args :row)
-        (remf cursor-args :col)
-        (when (< size (length str))
-          (setf str (subseq str 0 size)))
-        (apply #'set-cell (sink buf) str :row vrow :col vcol cursor-args)))))
+    (let ((row0 (row0 buf))
+          (col0 (col0 buf)))
+      (iterate-cells (chr crow ccol wrap-p)
+          (buf row col (string str))
+        (when (inside-p buf row col)
+          (let ((vrow (- (+ r1 row) row0 1))
+                (vcol (- (+ c1 col) col0 1)))
+            (when (and (<= r1 vrow r2)
+                       (<= c1 vcol c2))
+              (apply #'set-cell sink chr :row vrow :col vcol cursor-args))))))))
 
 (defmethod flush-output ((buffer surface) &rest args &key force)
   (declare (ignore args))

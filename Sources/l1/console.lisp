@@ -53,7 +53,7 @@
   (:default-initargs :ios (error "I/O stream must be specified.")))
 
 (defmethod initialize-instance :after
-    ((instance console) &rest args &key ios
+    ((instance console) &rest args &key ios fgc bgc
      &aux (*terminal* ios) (*console* instance))
   (setf (hnd instance) (init-terminal))
   (setf (cur instance) (make-instance 'tcursor :cvp t))
@@ -97,26 +97,17 @@
     (set-background-color (bgc cursor)))
   (finish-output *terminal*))
 
-(defmethod put-cell ((buf console) str
-                     &rest cursor-args
-                     &key row col fgc bgc &allow-other-keys)
-  (let* ((cur (cur buf))
-         (row (or row (row cur)))
-         (col (or col (col cur)))
-         (fgc (or fgc (fgc cur)))
-         (bgc (or bgc (bgc cur))))
-    (change-cursor-position cur row col)
-    (change-cursor-inks cur fgc bgc)
-    (multiple-value-bind (final-row final-col)
-        (iterate-cells (chr crow ccol wrap-p)
-            (buf row col (string str))
-          (when wrap-p
-            (change-cursor-position cur crow ccol))
-          (if (inside-p buf crow ccol)
-              (put chr)
-              (cursor-right)))
-      (set-row final-row cur)
-      (set-col final-col cur))))
+(defmethod put-cell ((buf console) str &rest cursor-args)
+  (let* ((cur (cur buf)))
+    (apply #'update-pen cur cursor-args)
+    (iterate-cells (chr crow ccol wrap-p)
+        (buf (row cur) (col cur) (string str))
+      (when wrap-p
+        (set-cursor-position crow ccol))
+      (if (inside-p buf crow ccol)
+          (put chr)
+          (cursor-right)))
+    (set-cursor-position (row cur) (col cur))))
 
 (defmethod handle-event ((client console) (event pointer-event))
   (let ((ptr (ptr client))
