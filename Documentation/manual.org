@@ -296,6 +296,46 @@ Input is read with the function ~process-next-event~ which has the same
 semantics as the function ~read-input~ in the level 0 abstraction and should
 be called instead (because it also updates the console state).
 
+** Text styles
+
+A text style is an opaque object constructed with the operator
+~make-text-style~. The following keywords / values paris are valid:
+
+- intensity  :: ~:normal :faint :bold~
+- underline  :: ~:none :single :double~
+- italicized :: ~nil t~
+- blink      :: ~nil t~
+- inverse    :: ~nil t~
+- invisible  :: ~nil t~
+- crossout   :: ~nil t~
+
+For instance to create a text style for a bold text with inversed color:
+
+#+BEGIN_SRC lisp
+  (make-text-style :intensity :bold :inverse t)
+#+END_SRC
+
+Unspecified elements are taken from the text style ~*default-text-style*~
+which default values are the first value elements in the keywords / values
+list above. To change the default text style before drawing the variable
+should be bound to a complete text style.
+
+To produce a complete text style call ~fuze-text-style~. The second argument
+to the function defaults to ~*default-text-style~ which is always complete.
+Binding ~*default-text-style~ to the incomplete text style has undefined
+consequences.
+
+#+BEGIN_SRC lisp
+  (fuze-text-style (make-text-style :italicized t))
+#+END_SRC
+
+To compare two text styles call ~text-style-equal~ which returns either a
+boolean.
+
+#+BEGIN_SRC lisp
+  (text-style-equal style-1 style-2)
+#+END_SRC
+
 ** Cursors
 
 Cursors may have multiple purposes:
