@@ -84,37 +84,28 @@
     (declare (ignore a))
     (sgr "48;2;" r ";" g ";" b)))
 
-(defun set-text-style (&key
-                         (intensity  nil intensity-p)
-                         (italicized nil italicized-p)
-                         (underline  nil underline-p)
-                         (crossout   nil crossout-p)
-                         (blink      nil blink-p)
-                         (inverse    nil inverse-p)
-                         (invisible  nil invisible-p))
-  (let ((numbers (remove-if #'null
-                            (list (and intensity-p
-                                       (ecase intensity
-                                         (:faint 2)
-                                         (:normal 22)
-                                         (:bold 1)))
-                                  (and underline-p
-                                       (ecase underline
-                                         (:none 24)
-                                         (:single  4)
-                                         (:double 21)))
-                                  (and italicized-p
-                                       (if italicized 3 23))
-                                  (and blink-p
-                                       (if blink      5 25))
-                                  (and inverse-p
-                                       (if inverse    7 27))
-                                  (and invisible-p
-                                       (if invisible  8 28))
-                                  (and crossout-p
-                                       (if crossout   9 29))))))
-    (when numbers
-      (csi (format nil "~{~a~^;~}" (remove nil numbers)) "m"))))
+
+(defun set-text-style (text-style)
+  (loop for (key val) on text-style by #'cddr
+        collect (ecase key
+                  (:intensity
+                   (ecase val
+                     (:faint 2)
+                     (:normal 22)
+                     (:bold 1)))
+                  (:underline
+                   (ecase val
+                     (:none 24)
+                     (:single 4)
+                     (:double 21)))
+                  (:italicized (if val 3 23))
+                  (:blink      (if val 5 25))
+                  (:inverse    (if val 7 27))
+                  (:invisible  (if val 8 28))
+                  (:crossout   (if val 9 29)))
+          into numbers
+        finally (when numbers
+                  (csi (format nil "~{~a~^;~}" (remove nil numbers)) "m"))))
 
 (defun reset-cursor-attributes ()
   (csi "0" "m"))

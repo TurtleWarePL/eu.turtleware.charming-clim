@@ -87,7 +87,7 @@
               (set-background-color bgc)
               (setf last-bgc bgc))
             (alexandria:when-let ((diff (text-style-diff txt last-txt)))
-              (apply #'set-text-style diff)
+              (set-text-style diff)
               (setf last-txt txt))
             (when (plusp gap)
               (cursor-right gap)
@@ -100,7 +100,7 @@
     (set-cursor-position (row cursor) (col cursor))
     (set-foreground-color (fgc cursor))
     (set-background-color (bgc cursor))
-    (apply #'set-text-style (txt cursor)))
+    (set-text-style (txt cursor)))
   (finish-output *terminal*))
 
 (defmethod put-cell ((buf console) str &rest cursor-args)

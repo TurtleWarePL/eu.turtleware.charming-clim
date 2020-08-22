@@ -100,17 +100,24 @@ are assumed to be opaque. To set colors:
 - ~set-background-color~ :: sets the background color
 
 Text attributes are configured with a function ~set-text-style~ which argument
-is one of ~:normal~ ~:bold~ ~:faint~ ~:italicized~ ~:underlined~ and ~:blink~.
+is a plist with the following keys and valid values:
+- intensity :: ~:faint :normal :bold~
+- underline :: ~:none :single :double~
+- italicized :: generalized boolean
+- blink      :: generalized boolean
+- inverse    :: generalized boolean
+- invisible  :: generalized boolean
+- crossout   :: generalized boolean
 
 To write some text on the console use the function ~put~ which accepts any
 number of arguments and writes them aesthetically to the terminal. It is
-necessary to call finish-output on the ~*terminal*~ to flush buffers.
+necessary to call ~finish-output~ on the ~*terminal*~ to flush buffers.
 
 Example:
 
 #+BEGIN_SRC lisp
   (l0:set-foreground-color #x884444ff)
-  (l0:set-text-style)
+  (l0:set-text-style '(:intensity :bold :blink t))
   (l0:put "Hello world!")
   (finish-output l0:*terminal*)
 #+END_SRC

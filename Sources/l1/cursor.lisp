@@ -104,7 +104,7 @@
   (set-cursor-position row col)
   (set-foreground-color fgc)
   (set-background-color bgc)
-  (apply #'set-text-style txt))
+  (set-text-style txt))
 
 (defmethod change-cursor-visiblep :before ((cur tcursor) visiblep)
   (unless (eql visiblep (cvp cur))
@@ -130,7 +130,7 @@
 (defmethod change-cursor-text ((pen tcursor) txt)
   (let ((diff (text-style-diff txt (txt pen))))
     (setf (txt pen) (fuze-text-style txt old-txt))
-    (apply #'set-text-style diff)))
+    (set-text-style diff)))
 
 
 (defclass pointer (cursor) ()
