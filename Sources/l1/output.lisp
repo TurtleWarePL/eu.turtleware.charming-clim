@@ -93,6 +93,7 @@
   (:default-initargs :chr #\space
                      :fgc (fgc (bcur *buffer*))
                      :bgc (bgc (bcur *buffer*))
+                     :txt (txt (bcur *buffer*))
                      :dirty-p t))
 
 (defclass output-buffer ()
@@ -155,7 +156,10 @@
         (or (aref data i0 i1)
             (setf (aref data i0 i1) (make-instance 'cell)))
         (load-time-value
-         (make-instance 'cell :chr #\space :fgc #xffffff00 :bgc #x00000000)))))
+         (make-instance 'cell :chr #\space
+                              :fgc #xffffff00
+                              :bgc #x00000000
+                              :txt *default-text-style*)))))
 
 ;;; All calls to this function iterate over the buffer and update the cell
 ;;; "dirty" status. Depending on the buffer's mode different things happen:
@@ -179,21 +183,24 @@
     (let ((row (row bcur))
           (col (col bcur))
           (fgc (fgc bcur))
-          (bgc (bgc bcur)))
-     (iterate-cells (chr crow ccol wrap-p)
-         (buf row col (string str))
-       (when (inside-p buf crow ccol)
-         (let* ((cell (get-cell buf crow ccol))
-                (clean (or (eq mode :wrt)
-                           (and (not (dirty-p cell))
-                                (eql chr (chr cell))
-                                (eql fgc (fgc cell))
-                                (eql bgc (bgc cell))))))
-           (setf (dirty-p cell) (not clean))
-           (unless (eq mode :dir)
-             (setf (chr cell) chr
-                   (fgc cell) fgc
-                   (bgc cell) bgc))))))
+          (bgc (bgc bcur))
+          (txt (txt bcur)))
+      (iterate-cells (chr crow ccol wrap-p)
+          (buf row col (string str))
+        (when (inside-p buf crow ccol)
+          (let* ((cell (get-cell buf crow ccol))
+                 (clean (or (eq mode :wrt)
+                            (and (not (dirty-p cell))
+                                 (eql chr (chr cell))
+                                 (eql fgc (fgc cell))
+                                 (eql bgc (bgc cell))
+                                 (text-style-equal txt (txt cell))))))
+            (setf (dirty-p cell) (not clean))
+            (unless (eq mode :dir)
+              (setf (chr cell) chr
+                    (fgc cell) fgc
+                    (bgc cell) bgc
+                    (txt cell) txt))))))
     (when (member mode '(:dir :wrt))
       (apply #'put-cell buf str (return-pen bcur)))))
 

@@ -38,9 +38,10 @@
                              (:file "terminal" :depends-on ("raw-mode"))))
                (:module "l1"
                 :depends-on ("packages" "l0")
-                :components ((:file "input")
+                :components ((:file "drawing")
                              (:file "cursor")
                              (:file "output")
+                             (:file "input")
                              (:file "surface" :depends-on ("output"))
                              (:file "console" :depends-on ("cursor" "output"))))
                (:module "l2"
@@ -54,7 +55,8 @@
   :pathname "Examples"
   :components ((:file "examples")
                (:file "l0-example")
-               (:file "l1-example")))
+               (:file "l1-example")
+               (:file "l1-wool")))
 
 (defsystem "eu.turtleware.charming-clim/demo"
   :license "BSD-2-Clause"

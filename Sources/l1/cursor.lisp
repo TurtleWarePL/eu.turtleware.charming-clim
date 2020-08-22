@@ -17,11 +17,8 @@
 (defgeneric change-cursor-inks (cursor fgc bgc)
   (:documentation "Changes the cursor colors."))
 
-(defgeneric change-cursor-text (cursor &rest args
-                                &key
-                                  intensity underline italicized
-                                  crossout blink inverse invisible)
-  (:documentation "Changes the cursor text properties."))
+(defgeneric change-cursor-text (cursor txt)
+  (:documentation "Changes the cursor text style."))
 
 (defgeneric cursor-enabledp (cursor)
   (:documentation "Returns a flag whether the cursor is enabled."))
@@ -39,37 +36,7 @@
   (:documentation "Returns the cursor foreground and background colors."))
 
 (defgeneric cursor-text (cursor)
-  (:documentation "Returns a plist with the text properties."))
-
-;;; This is a mixin class for the pen properties.
-(defclass drawing-style-mixin ()
-  ((fgc :initarg :fgc :accessor fgc :documentation "Foreground color")
-   (bgc :initarg :bgc :accessor bgc :documentation "Background color")
-   (txt :initarg :txt :accessor txt :documentation "Text properties"
-        :reader cursor-text))
-  (:default-initargs :fgc #x222222ff :bgc #xddddddff
-                     :txt '(:intensity :normal
-                            :underline :none
-                            :italicized nil
-                            :crossout   nil
-                            :blink      nil
-                            :inverse    nil
-                            :invisible  nil)))
-
-(defmethod change-cursor-inks ((pen drawing-style-mixin) fgc bgc)
-  (when fgc (setf (fgc pen) fgc))
-  (when bgc (setf (bgc pen) bgc)))
-
-(defmethod cursor-inks ((pen drawing-style-mixin))
-  (values (fgc pen) (bgc pen)))
-
-(defmethod change-cursor-text ((pen drawing-style-mixin) &rest args)
-  (loop with txt = (txt pen)
-        for (arg val) on args by #'cddr
-        do (unless (eql val (getf txt arg))
-             (setf (getf txt arg) val))
-        finally
-           (setf (txt pen) txt)))
+  (:documentation "Returns the cursor text style."))
 
 (defclass cursor (drawing-style-mixin)
   ((cep :initarg :cep :reader cep :writer set-cep :reader cursor-enabledp)
@@ -99,12 +66,25 @@
 (defmethod change-cursor-data ((cur cursor) data)
   (set-obj data cur))
 
+(defmethod change-cursor-inks ((pen cursor) fgc bgc)
+  (when fgc (setf (fgc pen) fgc))
+  (when bgc (setf (bgc pen) bgc)))
+
+(defmethod cursor-inks ((pen cursor))
+  (values (fgc pen) (bgc pen)))
+
+(defmethod change-cursor-text ((pen cursor) txt)
+  (setf (txt pen) (fuze-text-style txt (txt pen))))
+
+(defmethod cursor-text ((pen cursor))
+  (txt pen))
+
 ;;; Helper functions
 
 (defun update-pen (cursor &key row col fgc bgc txt)
   (change-cursor-position cursor row col)
   (change-cursor-inks cursor fgc bgc)
-  (apply #'change-cursor-text cursor txt))
+  (change-cursor-text cursor txt))
 
 (defun return-pen (cursor)
   (multiple-value-bind (row col) (cursor-position cursor)
@@ -146,16 +126,11 @@
       (set-background-color bgc)
       (setf (bgc pen) bgc))))
 
-(defmethod change-cursor-text ((pen tcursor) &rest args)
-  (loop with txt = (txt pen)
-        for (arg val) on args by #'cddr
-        unless (eql val (getf txt arg))
-          do (setf (getf txt arg) val)
-          and collect arg into dif
-          and collect val into dif
-        finally
-           (setf (txt pen) txt)
-           (apply #'set-text-style dif)))
+;;; something wrong here!(!)[!]
+(defmethod change-cursor-text ((pen tcursor) txt)
+  (let ((diff (text-style-diff txt (txt pen))))
+    (setf (txt pen) (fuze-text-style txt old-txt))
+    (apply #'set-text-style diff)))
 
 
 (defclass pointer (cursor) ()

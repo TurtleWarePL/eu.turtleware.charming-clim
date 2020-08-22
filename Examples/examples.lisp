@@ -19,7 +19,7 @@
              (warn "Example ~s does not exist.~%" name))))
     (if example
         (run-example example)
-        (progn (format t "Examples:~%~{~s~%~}> "
-                       (ax:hash-table-keys *examples*))
-               (finish-output)
-               (run-example (read))))))
+        (loop (format t "Examples:~%~{~s~%~}> "
+                      (ax:hash-table-keys *examples*))
+              (finish-output)
+              (run-example (read))))))
