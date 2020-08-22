@@ -32,7 +32,7 @@
 ;;; FIXME we assume complete text styles.
 (defun text-style-equal (text-style-1 text-style-2)
   (when (eql text-style-1 text-style-2)
-    (return-from text-style-diff t))
+    (return-from text-style-equal t))
   (loop for (key1 val1) on text-style-1 by #'cddr
         for (key2 val2) on text-style-2 by #'cddr
         unless (and (eql (getf text-style-2 key1) val1)
