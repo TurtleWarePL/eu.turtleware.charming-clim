@@ -54,8 +54,9 @@
 ;;; This is a mixin class for the pen properties. It is mixed to both cursor
 ;;; and cell so it is possible to easily copy cursor properties to the cell.
 (defclass drawing-style-mixin ()
-  ((fgc :initarg :fgc :accessor fgc :documentation "Foreground color")
+  ((chr :initarg :chr :accessor chr :documentation "Drawing character")
+   (fgc :initarg :fgc :accessor fgc :documentation "Foreground color")
    (bgc :initarg :bgc :accessor bgc :documentation "Background color")
    (txt :initarg :txt :accessor txt :documentation "Text style"))
-  (:default-initargs :fgc #x222222ff :bgc #xddddddff
+  (:default-initargs :chr #\space :fgc #x222222ff :bgc #xddddddff
                      :txt *default-text-style*))

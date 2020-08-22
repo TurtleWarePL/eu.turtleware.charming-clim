@@ -88,8 +88,7 @@
                      :fn (constantly t)))
 
 (defclass cell (drawing-style-mixin)
-  ((chr :initarg :chr :accessor chr)
-   (dirty-p :initarg :dirty-p :accessor dirty-p))
+  ((dirty-p :initarg :dirty-p :accessor dirty-p))
   (:default-initargs :chr #\space
                      :fgc (fgc (bcur *buffer*))
                      :bgc (bgc (bcur *buffer*))
