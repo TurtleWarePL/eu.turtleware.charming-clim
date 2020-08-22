@@ -22,4 +22,7 @@
         (loop (format t "Examples:~%~{~s~%~}> "
                       (ax:hash-table-keys *examples*))
               (finish-output)
-              (run-example (read))))))
+              (let ((key (read)))
+                (if (eq key :quit)
+                    (return)
+                    (run-example key)))))))
