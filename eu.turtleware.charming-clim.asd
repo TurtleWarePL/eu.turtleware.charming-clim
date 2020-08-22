@@ -40,13 +40,14 @@
                 :depends-on ("packages" "l0")
                 :components ((:file "drawing")
                              (:file "cursor")
-                             (:file "output")
+                             (:file "output" :depends-on ("drawing" "cursor"))
                              (:file "input")
                              (:file "surface" :depends-on ("output"))
                              (:file "console" :depends-on ("cursor" "output"))))
                (:module "l2"
                 :depends-on ("packages" "l0" "l1")
-                :components ((:file "display-lists")
+                :components ((:file "rendering")
+                             (:file "display-lists")
                              (:file "frame-manager" :depends-on ("display-lists"))))))
 
 (defsystem "eu.turtleware.charming-clim/examples"
