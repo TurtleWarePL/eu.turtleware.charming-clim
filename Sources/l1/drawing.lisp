@@ -60,3 +60,63 @@
    (txt :initarg :txt :accessor txt :documentation "Text style"))
   (:default-initargs :chr #\space :fgc #x222222ff :bgc #xddddddff
                      :txt *default-text-style*))
+
+
+(defclass cell (drawing-style-mixin)
+  ((dirty-p :initarg :dirty-p :accessor dirty-p))
+  (:default-initargs :chr #\space
+                     :fgc (fgc (bcur *buffer*))
+                     :bgc (bgc (bcur *buffer*))
+                     :txt (txt (bcur *buffer*))
+                     :dirty-p t))
+
+;;; Composing cells is a problematic thing to do. First we need to consider
+;;; whether the foreground color of the target cell is used, or whether we
+;;; blend only onto the background. In other words, over composition is:
+;;;
+;;; a) cell-1-bgc cell-1-fgc cell-2-bgc cell-2-fgc
+;;; b) cell-1-bgc ---------- cell-2-bgc cell-2-fgc
+;;;
+;;; Another question is whether we should give the space a special
+;;; treatment. For instance:
+;;;
+;;; - when cell-2-chr is a space and cell-2-bgc is not opaque, then use the
+;;;   cell-1-chr with appropriate color for the cell
+;;;
+;;; - when cell-1-chr is a space, then do not blend cell-1-fgc
+;;;
+;;; That could certainly give us the "wow" appeal when due, however it doesn't
+;;; seem super-useful and is quite irregular. Since the alpha composition in
+;;; the console is such a wastful and fun hack, we'll go with the "wow"
+;;; approach, which could be summarized with the following pseudocode:
+#+ (or)
+(let ((bgc (compose cell-1-bgc cell-2-bgc))
+      (fgc (cond ((not (char= #\space cell-2-chr))
+                  (compose cell-1-bgc cell-2-bgc cell-2-fgc))
+                 ((not (char= #\space cell-1-chr))
+                  (compose cell-1-bgc cell-1-fgc cell-2-bgc))
+                 (t
+                  #x00000000)))))
+;;; RGB components have premultiplied (associated) alpha[1].
+;;; [1] https://en.wikipedia.org/wiki/Alpha_compositing
+
+;;; CLIM has a fancy abstraction with uniform compositums, so it is possible
+;;; to easily blend whole surfaces when it is possible. We always go on cell
+;;; basis to be concise with the abstraction.
+(defun compose-cell (cell chr fgc bgc txt &optional (op :replace))
+  (check-type op (member :check :replace #|:over :in :out :atop :xor|#))
+  ;; FIXME                                 ^     ^   ^    ^     ^
+  (let ((clean (and (not (dirty-p cell))
+                    (eql chr (chr cell))
+                    (eql fgc (fgc cell))
+                    (eql bgc (bgc cell))
+                    (text-style-equal txt (txt cell)))))
+    (unless (eq op :check)
+      (setf (chr cell) chr
+            (fgc cell) fgc
+            (bgc cell) bgc
+            (txt cell) txt))
+    (values cell clean)))
+
+(defun compose-cells (target source op)
+  (compose-cell target (chr source) (fgc source) (bgc source) (txt source) op))

@@ -87,14 +87,6 @@
   (:default-initargs :r1 1 :c1 1 :r2 24 :c2 80
                      :fn (constantly t)))
 
-(defclass cell (drawing-style-mixin)
-  ((dirty-p :initarg :dirty-p :accessor dirty-p))
-  (:default-initargs :chr #\space
-                     :fgc (fgc (bcur *buffer*))
-                     :bgc (bgc (bcur *buffer*))
-                     :txt (txt (bcur *buffer*))
-                     :dirty-p t))
-
 (defclass output-buffer ()
   ((bcur :initarg :bcur :accessor bcur :documentation "Buffer's cursor"
          :reader buffer-cursor)
@@ -187,19 +179,13 @@
       (iterate-cells (chr crow ccol wrap-p)
           (buf row col (string str))
         (when (inside-p buf crow ccol)
-          (let* ((cell (get-cell buf crow ccol))
-                 (clean (or (eq mode :wrt)
-                            (and (not (dirty-p cell))
-                                 (eql chr (chr cell))
-                                 (eql fgc (fgc cell))
-                                 (eql bgc (bgc cell))
-                                 (text-style-equal txt (txt cell))))))
-            (setf (dirty-p cell) (not clean))
-            (unless (eq mode :dir)
-              (setf (chr cell) chr
-                    (fgc cell) fgc
-                    (bgc cell) bgc
-                    (txt cell) txt))))))
+          (multiple-value-bind (cell clean)
+              (compose-cell (get-cell buf crow ccol) chr fgc bgc txt
+                            (if (eq mode :dir)
+                                :check
+                                :replace))
+            (setf (dirty-p cell)
+                  (not (or (eq mode :wrt) clean)))))))
     (when (member mode '(:dir :wrt))
       (apply #'put-cell buf str (return-pen bcur)))))
 
