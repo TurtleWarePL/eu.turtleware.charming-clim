@@ -22,29 +22,6 @@
 
 (defun draw-peep (row col)
   (loop for drow from -3 upto +3
-        do (l1:out (:row (+ row drow)
-                    :col (- col 6)
-                    :fgc +grey1+
-                    :bgc +black+)
-                   "32")
-           (l1:out (:row (+ row drow)
-                    :col (+ col 6)
-                    :fgc +grey1+
-                    :bgc +black+)
-                   "30"))
-  (loop for dcol from -6 upto 6 by 2
-        do (l1:out (:row (- row 3)
-                    :col (+ col dcol)
-                    :fgc +grey1+
-                    :bgc +black+)
-                   "87")
-           (l1:out (:row (+ row 3)
-                    :col (+ col dcol)
-                    :fgc +grey1+
-                    :bgc +black+)
-                   "42"))
-  #+ (or)
-  (loop for drow from -3 upto +3
         do (loop for dcol from -3 upto +3
                  do (if (and (<= (+ (abs dcol) (abs drow)) 3)
                              (>= (+ (abs dcol) (abs drow)) 2))
