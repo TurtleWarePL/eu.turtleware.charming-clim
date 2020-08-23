@@ -12,7 +12,38 @@
 
 ;;; Symmetry is the fool's aesthetics.
 
+(defun draw-text (string row col &key (align :left))
+  (flet ((do-it (row col)
+           (out (:row row :col col) string)))
+    (ecase align
+      (:left   (do-it row col))
+      (:center (do-it row (- col (truncate (length string) 2))))
+      (:right  (do-it row (- col (length string)))))))
+
 (defun draw-peep (row col)
+  (loop for drow from -3 upto +3
+        do (l1:out (:row (+ row drow)
+                    :col (- col 6)
+                    :fgc +grey1+
+                    :bgc +black+)
+                   "32")
+           (l1:out (:row (+ row drow)
+                    :col (+ col 6)
+                    :fgc +grey1+
+                    :bgc +black+)
+                   "30"))
+  (loop for dcol from -6 upto 6 by 2
+        do (l1:out (:row (- row 3)
+                    :col (+ col dcol)
+                    :fgc +grey1+
+                    :bgc +black+)
+                   "87")
+           (l1:out (:row (+ row 3)
+                    :col (+ col dcol)
+                    :fgc +grey1+
+                    :bgc +black+)
+                   "42"))
+  #+ (or)
   (loop for drow from -3 upto +3
         do (loop for dcol from -3 upto +3
                  do (if (and (<= (+ (abs dcol) (abs drow)) 3)
@@ -28,23 +59,27 @@
                                  :bgc +black+)
                                 "  ")))))
 
+(defun draw-wool ()
+  (multiple-value-bind (r1 c1 r2 c2)
+      (l1:bbox l1:*console*)
+    (let ((crow (truncate (+ r1 r2) 2))
+          (ccol (truncate (+ c1 c2) 2)))
+      (l1:ctl (:txt '(:intensity :bold :underline :single)))
+      (draw-text "Wool" (- crow 8) ccol :align :center)
+      (l1:ctl (:txt '(:intensity :normal :underline :none)))
+      (draw-text "Interactive generative ploy" (- crow 6) ccol :align :center)
+      (l1:ctl (:ink +purple+ +black+))
+      (draw-peep crow ccol)
+      (l1:ctl (:ink +white+ +black+))
+      (l1:ctl (:txt '(:italicized t :intensity :faint)))
+      (draw-text "Draw something." (+ crow 8) ccol :align :center)
+      (l1:ctl (:txt '(:italicized nil :intensity :normal)))
+      (l1:ctl (:fls))
+      (l1:process-next-event t))))
+
 (defun start-wool ()
   (l1:with-console (:ios *terminal-io*)
     (l1:ctl (:ink +white+ +black+))
-    (multiple-value-bind (r1 c1 r2 c2)
-        (l1:bbox l1:*console*)
-      (let ((crow (truncate (+ r1 r2) 2))
-            (ccol (truncate (+ c1 c2) 2)))
-        (l1:ctl (:txt '(:intensity :bold :underline :single)))
-        (l1:draw-text "Wool" (- crow 8) ccol :align :center)
-        (l1:ctl (:txt '(:intensity :normal :underline :none)))
-        (l1:draw-text "Interactive generative ploy" (- crow 6) ccol :align :center)
-        (l1:ctl (:ink +purple+ +black+))
-        (draw-peep crow ccol)
-        (l1:ctl (:ink +white+ +black+))
-        (l1:ctl (:txt '(:italicized t :intensity :faint)))
-        (l1:draw-text "Draw something." (+ crow 8) ccol :align :center)
-        (l1:ctl (:fls))
-        (l1:process-next-event t)))))
+    (loop (draw-wool))))
 
 (register-example :wool 'start-wool)

@@ -180,10 +180,9 @@
           (buf row col (string str))
         (when (inside-p buf crow ccol)
           (multiple-value-bind (cell clean)
-              (compose-cell (get-cell buf crow ccol) chr fgc bgc txt
-                            (if (eq mode :dir)
-                                :check
-                                :replace))
+              (write-cell (get-cell buf crow ccol)
+                          chr fgc bgc txt
+                          :only-check (eq mode :dir))
             (setf (dirty-p cell)
                   (not (or (eq mode :wrt) clean)))))))
     (when (member mode '(:dir :wrt))
