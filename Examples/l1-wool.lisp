@@ -11,14 +11,6 @@
 (defconstant +purple+ #xff88ffff)
 
 ;;; Symmetry is the fool's aesthetics.
-(defun draw-text (string center-row center-col txt)
-  (l1:out (:row center-row
-           :col (- center-col (truncate (length string) 2))
-           :fgc +white+
-           :bgc +black+
-           :txt txt)
-          string)
-  (l1:ctl (:fls)))
 
 (defun draw-peep (row col)
   (loop for drow from -3 upto +3
@@ -38,19 +30,21 @@
 
 (defun start-wool ()
   (l1:with-console (:ios *terminal-io*)
+    (l1:ctl (:ink +white+ +black+))
     (multiple-value-bind (r1 c1 r2 c2)
         (l1:bbox l1:*console*)
-      (let ((center-row (truncate (+ r1 r2) 2))
-            (center-col (truncate (+ c1 c2) 2)))
-        (draw-text "Wool" (- center-row 8) center-col
-                   '(:intensity :bold :underline :single))
-        (draw-text "Interactive generative ploy"
-                   (- center-row 6) center-col '(:intensity :normal
-                                                 :underline :none))
-        (draw-peep center-row center-col)
-        (draw-text "Draw something."
-                   (+ center-row 8) center-col '(:italicized t
-                                                 :intensity :faint))
+      (let ((crow (truncate (+ r1 r2) 2))
+            (ccol (truncate (+ c1 c2) 2)))
+        (l1:ctl (:txt '(:intensity :bold :underline :single)))
+        (l1:draw-text "Wool" (- crow 8) ccol :align :center)
+        (l1:ctl (:txt '(:intensity :normal :underline :none)))
+        (l1:draw-text "Interactive generative ploy" (- crow 6) ccol :align :center)
+        (l1:ctl (:ink +purple+ +black+))
+        (draw-peep crow ccol)
+        (l1:ctl (:ink +white+ +black+))
+        (l1:ctl (:txt '(:italicized t :intensity :faint)))
+        (l1:draw-text "Draw something." (+ crow 8) ccol :align :center)
+        (l1:ctl (:fls))
         (l1:process-next-event t)))))
 
 (register-example :wool 'start-wool)
