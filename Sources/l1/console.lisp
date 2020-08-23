@@ -55,10 +55,26 @@
 (defmethod initialize-instance :after
     ((instance console) &rest args &key ios fgc bgc
      &aux (*terminal* ios) (*console* instance))
+  (declare (ignore args))
   (setf (hnd instance) (init-terminal))
-  (setf (cur instance) (make-instance 'tcursor :cvp t))
-  (setf (ptr instance) (make-instance 'pointer :cvp t :cep nil))
+  (setf (cur instance) (make-instance 'tcursor :cvp nil :fgc fgc :bgc bgc))
+  (setf (ptr instance) (make-instance 'pointer :cvp t :cep t))
   (process-available-events t))
+
+;;; Cursors are showed after flushing output and they are presented in direct
+;;; mode, so they don't modify the actual buffered cell. When we move cursor
+;;; we want to "see" its previous content.
+(defun show-cursors (console)
+  (let* ((ptr (ptr console))
+         (row (row ptr))
+         (col (col ptr))
+         (txt (txt ptr))
+         (chr (chr (get-cell console row col))))
+    (letf (((mode console) :dir))
+      (out (:row row :col col :txt txt :fgc #xff0000ff)
+           (if (char= chr #\space)
+               #\X
+               chr)))))
 
 (defmethod flush-output ((buffer console) &rest args &key force)
   (declare (ignore args))
@@ -100,7 +116,8 @@
     (set-cursor-position (row cursor) (col cursor))
     (set-foreground-color (fgc cursor))
     (set-background-color (bgc cursor))
-    (set-text-style (txt cursor)))
+    (set-text-style (txt cursor))
+    (show-cursors buffer))
   (finish-output *terminal*))
 
 (defmethod put-cell ((buf console) str &rest cursor-args)

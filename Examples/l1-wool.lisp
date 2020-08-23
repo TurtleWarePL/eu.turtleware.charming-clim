@@ -29,7 +29,7 @@
                                  :col (+ col (* 2 dcol))
                                  :fgc +purple+
                                  :bgc +black+)
-                                "HX")
+                                (ax:random-elt '("HX" "30" "42")))
                         (l1:out (:row (+ row drow)
                                  :col (+ col (* 2 dcol))
                                  :fgc +purple+
@@ -39,9 +39,11 @@
 (defun draw-wool ()
   (multiple-value-bind (r1 c1 r2 c2)
       (l1:bbox l1:*console*)
+    (l1:ctl (:ink +white+ +black+)
+            (:clr r1 c1 r2 c2))
     (let ((crow (truncate (+ r1 r2) 2))
           (ccol (truncate (+ c1 c2) 2)))
-      (l1:ctl (:txt '(:intensity :bold :underline :single)))
+      (l1:ctl (:txt '(:intensity :bold :underline :single :blink nil)))
       (draw-text "Wool" (- crow 8) ccol :align :center)
       (l1:ctl (:txt '(:intensity :normal :underline :none)))
       (draw-text "Interactive generative ploy" (- crow 6) ccol :align :center)

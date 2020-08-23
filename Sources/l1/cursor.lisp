@@ -86,6 +86,11 @@
   (change-cursor-inks cursor fgc bgc)
   (change-cursor-text cursor txt))
 
+(defun update-pen* (cursor src)
+  (update-pen cursor :txt (txt src)
+                     :row (row src) :col (col src)
+                     :fgc (fgc src) :bgc (bgc src)))
+
 (defun return-pen (cursor)
   (multiple-value-bind (row col) (cursor-position cursor)
     (multiple-value-bind (fgc bgc) (cursor-inks cursor)
@@ -98,7 +103,7 @@
 (defmethod initialize-instance :after
     ((instance tcursor) &rest args
      &key row col cep cvp fgc bgc txt)
-  (declare (ignore args))
+  (declare (ignore args cep))
   (set-cursor-position row col)
   (set-cursor-visibility cvp)
   (set-cursor-position row col)
@@ -129,7 +134,7 @@
 ;;; something wrong here!(!)[!]
 (defmethod change-cursor-text ((pen tcursor) txt)
   (let ((diff (text-style-diff txt (txt pen))))
-    (setf (txt pen) (fuze-text-style txt old-txt))
+    (setf (txt pen) (fuze-text-style txt (txt pen)))
     (set-text-style diff)))
 
 
@@ -139,10 +144,11 @@
 
 (defmethod initialize-instance :after
     ((instance pointer) &rest args)
+  (declare (ignore args))
   (set-mouse-tracking (cursor-enabledp instance)))
 
 (defmethod change-cursor-enabledp :before ((cur pointer) enabledp)
-  (unless (eq enabledp (cursor-enabledp instance))
+  (unless (eq enabledp (cursor-enabledp cur))
     (set-mouse-tracking enabledp)))
 
 (defclass vpointer (cursor) ()
