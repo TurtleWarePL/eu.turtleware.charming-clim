@@ -9,6 +9,7 @@
 (defconstant +grey1+  #x444444ff)
 (defconstant +grey2+  #xbbbbbbff)
 (defconstant +purple+ #xff88ffff)
+(defconstant +blue+   #x8888ffff)
 
 ;;; Symmetry is the fool's aesthetics.
 
@@ -53,7 +54,16 @@
       (l1:ctl (:txt '(:italicized t :intensity :faint)))
       (draw-text "Draw something." (+ crow 8) ccol :align :center)
       (l1:ctl (:txt '(:italicized nil :intensity :normal)))
-      (l1:ctl (:fls))
+      (let* ((cur (eu.turtleware.charming-clim::cur l1:*console*))
+             (row (eu.turtleware.charming-clim::row cur))
+             (col (eu.turtleware.charming-clim::col cur))
+             (drow (abs (- crow row)))
+             (dcol (abs (- ccol col))))
+        (l1:out (:row (+ crow drow) :col (- ccol dcol) :fgc +blue+) "1")
+        (l1:out (:row (+ crow drow) :col (+ ccol dcol) :fgc +blue+) "2")
+        (l1:out (:row (- crow drow) :col (- ccol dcol) :fgc +blue+) "3")
+        (l1:out (:row (- crow drow) :col (+ ccol dcol) :fgc +blue+) "4"))
+      (l1:ctl (:fls :force t))
       (l1:process-next-event t))))
 
 (defun start-wool ()
