@@ -302,15 +302,16 @@ Returns a generalized boolean (when true returns an event)."
                (31 :f17) (32 :f18) (33 :f19) (34 :f20))))
     (maybe-combo key num2)))
 
-(define-key-resolver #\[ #\A (num1 num2) (maybe-combo :key-up    num2))
-(define-key-resolver #\[ #\B (num1 num2) (maybe-combo :key-down  num2))
-(define-key-resolver #\[ #\C (num1 num2) (maybe-combo :key-right num2))
-(define-key-resolver #\[ #\D (num1 num2) (maybe-combo :key-left  num2))
+;;; fish fish
+(define-key-resolver #\[ #\A (num) (maybe-combo :key-up    num))
+(define-key-resolver #\[ #\B (num) (maybe-combo :key-down  num))
+(define-key-resolver #\[ #\C (num) (maybe-combo :key-right num))
+(define-key-resolver #\[ #\D (num) (maybe-combo :key-left  num))
 
-(define-key-resolver #\O #\P (num1 num2) (maybe-combo :f1 num2))
-(define-key-resolver #\O #\Q (num1 num2) (maybe-combo :f2 num2))
-(define-key-resolver #\O #\R (num1 num2) (maybe-combo :f3 num2))
-(define-key-resolver #\O #\S (num1 num2) (maybe-combo :f4 num2))
+(define-key-resolver #\O #\P (num) (maybe-combo :f1 num))
+(define-key-resolver #\O #\Q (num) (maybe-combo :f2 num))
+(define-key-resolver #\O #\R (num) (maybe-combo :f3 num))
+(define-key-resolver #\O #\S (num) (maybe-combo :f4 num))
 
 (define-key-resolver #\[ #\R (row col)
   (if *request-terminal-size*
