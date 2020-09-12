@@ -301,7 +301,8 @@ mode (see the section "Buffers").
 
 Input is read with the function ~process-next-event~ which has the same
 semantics as the function ~read-input~ in the level 0 abstraction and should
-be called instead (because it also updates the console state).
+be called instead (because it also updates the console state and calls the
+function ~handle-event~ which may be optionally specialized by clients).
 
 ** Text styles
 
@@ -310,11 +311,11 @@ A text style is an opaque object constructed with the operator
 
 - intensity  :: ~:normal :faint :bold~
 - underline  :: ~:none :single :double~
-- italicized :: ~nil t~
-- blink      :: ~nil t~
-- inverse    :: ~nil t~
-- invisible  :: ~nil t~
-- crossout   :: ~nil t~
+- italicized :: generalized boolean
+- blink      :: generalized boolean
+- inverse    :: generalized boolean
+- invisible  :: generalized boolean
+- crossout   :: generalized boolean
 
 For instance to create a text style for a bold text with inversed color:
 
@@ -345,7 +346,7 @@ boolean.
 
 ** Cursors
 
-Cursors may have multiple purposes:
+Cursor can have multiple purposes:
 
 - pen      :: defines a drawing style
 - position :: stores current row and column
@@ -361,13 +362,16 @@ The cursor protocol:
 - cursor-inks,     change-cursor-inks       :: gf
 - cursor-text,     change-cursor-text       :: gf
 - cursor-data,     change-cursor-data       :: gf
-- cursor :cep :cvp :row :col :fgc :bgc :txt :: class and initargs
+- cursor                                    :: class
+- :cep :cvp :row :col :fgc :bgc :txt :obj   :: initargs
 
 It is up to the buffer owning the cursor to update its state and to honor
 flags like ~enabledp~ or ~visiblep~. The console maintains a few special
 purpose cursors: the terminal cursor, the pointer cursor and the virtual
-pointer cursor. Additionally at least two cursors are associated with each
-buffer: a buffer cursor and a direct cursor.
+pointer cursor.
+
+At least two cursors are associated with each buffer: a buffer cursor and a
+direct cursor. In case of the console a direct cursor is the terminal cursor.
 
 *** Terminal cursor
 
@@ -403,10 +407,10 @@ write-through rendering mode.
 This abstraction level allows both buffered and direct writes. A direct cursor
 is the cursor which performs direct operations (from the buffer perspective)
 unlike the buffer cursor which writes to its internal memory. Direct cursor is
-used when flushing an output and in direct and write-through rendering mode.
+used when flushing the output and in direct and write-through rendering mode.
 
-For console a direct cursor is the terminal cursor. For a surface it is its
-sink's current cursor and depends on the rendering mode of the sink:
+For the console a direct cursor is the terminal cursor. For a surface it is
+its sink's current cursor and depends on the rendering mode of the sink:
 
 - dir :: sink's direct cursor
 - buf :: sink's buffer cursor
@@ -417,5 +421,19 @@ sink's current cursor and depends on the rendering mode of the sink:
 *** Console
 *** Surface
 
+** Hints
 
+*** Drawing the cursor
 
+In order to draw the cursor without modifying a buffer a direct mode should be
+used, however that's not enough. When the buffer is flushed it will draw over
+the cursor marker and make it invisible again. In order to avoid that, define
+an after method for ~flush-output~ and draw the cursor from there.
+
+#+BEGIN_SRC lisp
+  (defmethod l1:flush-output :after ((client wool) &rest args)
+    (declare (ignore args))
+    (multiple-value-bind (row col)
+        (l1:cursor-position (my-cursor client))
+      (put-cell client "X" :row 42 :col :fgc #xff000000)))
+#+END_SRC
