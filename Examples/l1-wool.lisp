@@ -37,11 +37,42 @@
                                  :bgc +black+)
                                 "  ")))))
 
+;;; This function draws "drawing cursors", that is the pointer and its
+;;; mirrored versions. It is used both to draw cursors and to modify a buffer,
+;;; the rendering mode is specified as the third argument.
+(defun draw-cursors (x y mode)
+  (let* ((buf l1:*buffer*)
+         (cur (fm::ptr buf))
+         (crow (/ (1+ (fm::rows buf)) 2))
+         (ccol (/ (1+ (fm::cols buf)) 2))
+         (row (fm::row cur))
+         (col (fm::col cur))
+         (drow (- crow row))
+         (dcol (- ccol col)))
+    ;; Center of the terminal is tricky, it may be in the center or between
+    ;; two adjacent cells - that applies separately to both rows and
+    ;; columns. When we work with small pixels it could rounded, but pixels of
+    ;; a character size a difference is easy to spot. -- jd 2020-08-25
+    (fm::letf (((fm::mode buf) mode))
+      (l1:out (:row (- crow drow) :col (- ccol dcol) :fgc +blue+) "1")
+      (l1:out (:row (- crow drow) :col (+ ccol dcol) :fgc +blue+) "2")
+      (l1:out (:row (+ crow drow) :col (- ccol dcol) :fgc +blue+) "3")
+      (l1:out (:row (+ crow drow) :col (+ ccol dcol) :fgc +blue+) "4")
+
+      ;; (l1:out (:row (+ crow (truncate dcol 2))
+      ;;          :col (- ccol (* drow 2)) :fgc +blue+) "8")
+      ;; (l1:out (:row (+ crow (truncate dcol 2))
+      ;;          :col (+ ccol (* drow 2)) :fgc +blue+) "9")
+      ;; (l1:out (:row (- crow (truncate dcol 2))
+      ;;          :col (- ccol (* drow 2)) :fgc +blue+) "0")
+      ;; (l1:out (:row (- crow (truncate dcol 2))
+      ;;          :col (+ ccol (* drow 2)) :fgc +blue+) "a")
+      (finish-output fm::*terminal*))))
+
 (defun draw-wool ()
   (multiple-value-bind (r1 c1 r2 c2)
-      (l1:bbox l1:*console*)
-    (l1:ctl (:ink +white+ +black+)
-            (:clr r1 c1 r2 c2))
+      (l1:bbox l1:*buffer*)
+    (l1:ctl (:ink +white+ +black+))
     (let ((crow (truncate (+ r1 r2) 2))
           (ccol (truncate (+ c1 c2) 2)))
       (l1:ctl (:txt '(:intensity :bold :underline :single :blink nil)))
@@ -54,20 +85,25 @@
       (l1:ctl (:txt '(:italicized t :intensity :faint)))
       (draw-text "Draw something." (+ crow 8) ccol :align :center)
       (l1:ctl (:txt '(:italicized nil :intensity :normal)))
-      (let* ((cur (eu.turtleware.charming-clim::cur l1:*console*))
-             (row (eu.turtleware.charming-clim::row cur))
-             (col (eu.turtleware.charming-clim::col cur))
-             (drow (abs (- crow row)))
-             (dcol (abs (- ccol col))))
-        (l1:out (:row (+ crow drow) :col (- ccol dcol) :fgc +blue+) "1")
-        (l1:out (:row (+ crow drow) :col (+ ccol dcol) :fgc +blue+) "2")
-        (l1:out (:row (- crow drow) :col (- ccol dcol) :fgc +blue+) "3")
-        (l1:out (:row (- crow drow) :col (+ ccol dcol) :fgc +blue+) "4"))
-      (l1:ctl (:fls :force t))
+      (l1:ctl (:fls))
       (l1:process-next-event t))))
 
+(defclass wool (l1:console)
+  ((n-fold :initarg :n-fold :accessor n-fold)
+   (mirror :initarg :mirror :accessor mirror)
+   (spiral :initarg :spiral :accessor spiral))
+  (:default-initargs :n-fold 1 :mirror :y :spiral nil))
+
+(defmethod fm::flush-output :after ((client wool) &rest args)
+  (declare (ignore args))
+  (draw-cursors 40 80 :dir))
+
+(defmethod l1:handle-event :after ((client wool) (event l0:pointer-event))
+  (when (eq :left (l0:btn event))
+    (draw-cursors 40 80 :buf)))    
+
 (defun start-wool ()
-  (l1:with-console (:ios *terminal-io*)
+  (l1:with-console (:ios *terminal-io* :console-class 'wool)
     (l1:ctl (:ink +white+ +black+))
     (loop (draw-wool))))
 

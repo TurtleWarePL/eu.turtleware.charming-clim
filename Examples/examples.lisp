@@ -2,7 +2,8 @@
   (:use #:cl)
   (:local-nicknames (#:ax #:alexandria)
                     (#:l0 #:eu.turtleware.charming-clim/l0)
-                    (#:l1 #:eu.turtleware.charming-clim/l1))
+                    (#:l1 #:eu.turtleware.charming-clim/l1)
+                    (#:fm #:eu.turtleware.charming-clim))
   (:export #:start))
 
 (in-package #:eu.turtleware.charming-clim.examples)

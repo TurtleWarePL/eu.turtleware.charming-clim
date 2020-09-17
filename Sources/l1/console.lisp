@@ -159,5 +159,6 @@
          (swank:create-server :dont-close t))
         ((keyp event #\R :c)
          (ctl (:ink #xffffffff #x00000000))
+         (ctl (:clr 1 1 (rows *console*) (cols *console*)))
          (clear-terminal)
          (process-available-events t))))

@@ -418,8 +418,75 @@ its sink's current cursor and depends on the rendering mode of the sink:
 
 ** Buffers
 
-*** Console
+*** Output buffer
+
+~output-buffer~ is an abstract class which implements output buffering and
+clipping. Functions specified for all instances of that class are:
+
+- buffer-cursor
+- direct-cursor
+- flush-output
+- put-cell
+- set-cell
+- mode, (setf mode)
+- bbox, rows, cols
+- inside-p
+- invoke-with-clipping
+
+To specify a "current" buffer a macro ~with-buffer~ is specified. Macros
+operating on the current buffer are ~ctl~ and ~out~. Additionally a function
+~clear-rectangle~ is build on top of the macro ~out~.
+
+A helper class is defined which implements a ~bbox~ protocol, that is accessors
+~r1 c1 r2 c2~ which define a bounding box (accessors are keywords with the same
+names). The method ~bbox~ specialized on this class returns said four values.
+
 *** Surface
+
+A surface is a parasite output buffer - its direct cursor is in fact a buffer
+cursor of its sink (i.e a console or an another output buffer). Surface
+subclasses ~bbox~ and ~output-buffer~ and it has its own dimensions (expressed
+in the sink coordinates) as well as a scroll offset. For example if we have a
+surface with a bounding box ~3 6 5 11~, then it starts at 3rd row and 6th column
+and it spans 3 rows and 6 columns. The surface may be much bigger than its
+bounding box - the rest is clipped accordingly.
+
+A scroll offset is added to the coordinate, so if the offset is:
+- [0,0], then surface's cell [1,1] is located at [r1,c1]
+- [2,2], then surface's cell [3,3] is located at [r1,c1]
+
+Surface protocol:
+
+- surface (bbox output-buffer) :: protocol class
+- r1, c1, r2, c2 :: surface dimensions in its sink's coordinates
+- row0, col0 :: scroll offset
+- (:row0 0), (:col0 0), :r1, :c1, :r2, :c2, (:sink *buffer*) :: initargs
+
+Do determine actual size of the surface it is enough to call appropriate
+~output-buffer~ protocol functions.
+
+Helper functions:
+- (scroll-buffer buf row-dx col-dx) :: scrolls the buffer
+- (move-buffer buf row-dx col-dx) :: moves the buffer in parent's coordinates
+
+*** Console
+
+A class ~console~ represents a terminal and adds to it buffering capabilities,
+rendering modes and default input processing. Moreover it maintains the terminal
+cursor (as its direct cursor), a pointer cursor (a mouse extension) and a
+virtual pointer cursor (keyboard-driven fake pointer). ~console~ is a subclass
+of ~output-buffer~.
+
+This class is default for ~with-console~ macro and represents a "single" window
+for the application. It is possible to specify a different class with the
+keyword argument ~console-class~ in the macro ~with-console~. Usually it will be
+a subclass of the console.
+
+*** Surface manager
+
+A class ~surface-manager~ is a subclass of the ~console~ and is meant to manage
+multiple surfaces. If ~console~ could be considered as a full screen
+"application window", then ~surface-manager~ would be a "window manager".
 
 ** Hints
 
