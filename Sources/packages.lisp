@@ -35,6 +35,7 @@
            #:event
            #:terminal-event
            #:unknown-terminal-event #:seq
+           #:oink-terminal-event #:err #:res
            #:cursor-position-event #:row #:col
            #:terminal-resize-event #:rows #:cols
            #:keyboard-event #:key #:kch #:mods

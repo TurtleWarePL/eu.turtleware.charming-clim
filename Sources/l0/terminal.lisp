@@ -175,6 +175,11 @@
 (defclass unknown-terminal-event (terminal-event)
   ((seq :initarg :seq :accessor seq)))
 
+;;; When this event is signaled then we have a bug!
+(defclass oink-terminal-event (unknown-terminal-event)
+  ((err :initarg :err :accessor err)
+   (res :initarg :res :accessor res)))
+
 (defclass cursor-position-event (terminal-event)
   ((row :initarg :row :accessor row)
    (col :initarg :col :accessor col)))
@@ -281,7 +286,6 @@ Returns a generalized boolean (when true returns an event)."
                       (ash (char-code group) 8))
                   *key-resolvers*)
          (lambda ,args
-           (declare (ignorable ,@args))
            ,@body)))
 
 (defun maybe-combo (key num2)
@@ -337,16 +341,29 @@ Returns a generalized boolean (when true returns an event)."
                      (#.+delete+ :delete)
                      (t group))
                    (1+ +alt-mod+))
-      (apply (gethash (+ (char-code |Hasta la vista, baby|)
-                         (ash (char-code group) 8))
-                      *key-resolvers*
-                      (lambda (&rest args)
-                        (make-instance 'unknown-terminal-event
-                                       :seq (list +escape+
-                                                  group
-                                                  args
-                                                  |Hasta la vista, baby|))))
-             args)))
+      (let ((resolver
+              (gethash (+ (char-code |Hasta la vista, baby|)
+                          (ash (char-code group) 8))
+                       *key-resolvers*
+                       (lambda (&rest args)
+                         (make-instance 'unknown-terminal-event
+                                        :seq (list +escape+
+                                                   group
+                                                   args
+                                                   |Hasta la vista, baby|))))))
+        (handler-case (apply resolver args)
+          (error (condition)
+            (cerror "continue" "seq ~s~%err ~a~%res ~s"
+                    (list +escape+ group args |Hasta la vista, baby|)
+                    condition
+                    resolver)
+            (make-instance 'oink-terminal-event
+                           :seq (list +escape+
+                                      group
+                                      args
+                                      |Hasta la vista, baby|)
+                           :err condition
+                           :res resolver))))))
 
 (defun resolve-mouse (btn col row |Hasta la vista, baby|)
   (let ((state (cond ((not (zerop (ldb (byte 1 5) btn))) :motion)
