@@ -424,11 +424,11 @@ Returns a generalized boolean (when true returns an event)."
         (multiple-value-bind (nums terminator)
             (parse-escape-sequence)
           (resolve-key next-ch nums terminator)))
-    :escape))
+    (make-instance 'keyboard-event :key :escape :mods 0)))
 
 (defun deletep (ch)
   (when (char= ch +delete+)
-    :delete))
+    (make-instance 'keyboard-event :key :escape :mods 0)))
 
 (defun read-input (&optional (waitp nil))
   ;; READ-CHAR may read more than one byte and return an alphanumeric
