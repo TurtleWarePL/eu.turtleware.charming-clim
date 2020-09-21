@@ -292,10 +292,11 @@ Returns a generalized boolean (when true returns an event)."
   (alexandria:if-let ((ctrl (and (characterp key) (controlp key))))
     (prog1 ctrl
       (setf (mods ctrl) (logior (1- num2) +ctrl-mod+)))
-    (or (and (= num2 1) key)
+    (if (null num2)
+        (make-instance 'keyboard-event :key key :mods 0)
         (make-instance 'keyboard-event :key key :mods (1- num2)))))
 
-(define-key-resolver #\[ #\~ (num1 num2)
+(define-key-resolver #\[ #\~ (num1 &optional num2)
   (let ((key (case num1
                (1 :home) (2  :insert) (3    :delete)
                (4  :end) (5 :page-up) (6 :page-down)
@@ -307,15 +308,53 @@ Returns a generalized boolean (when true returns an event)."
     (maybe-combo key num2)))
 
 ;;; fish fish
-(define-key-resolver #\[ #\A (num) (maybe-combo :key-up    num))
-(define-key-resolver #\[ #\B (num) (maybe-combo :key-down  num))
-(define-key-resolver #\[ #\C (num) (maybe-combo :key-right num))
-(define-key-resolver #\[ #\D (num) (maybe-combo :key-left  num))
+(define-key-resolver #\[ #\A (num &optional num2)
+  (assert (= num 1))
+  (maybe-combo :key-up num2))
 
-(define-key-resolver #\O #\P (num) (maybe-combo :f1 num))
-(define-key-resolver #\O #\Q (num) (maybe-combo :f2 num))
-(define-key-resolver #\O #\R (num) (maybe-combo :f3 num))
-(define-key-resolver #\O #\S (num) (maybe-combo :f4 num))
+(define-key-resolver #\[ #\B (num &optional num2)
+  (assert (= num 1))
+  (maybe-combo :key-down num2))
+
+(define-key-resolver #\[ #\C (num &optional num2)
+  (assert (= num 1))
+  (maybe-combo :key-right num2))
+
+(define-key-resolver #\[ #\D (num &optional num2)
+  (assert (= num 1))
+  (maybe-combo :key-left num2))
+
+(define-key-resolver #\[ #\P (num &optional num2)
+  (assert (= num 1))
+  (maybe-combo :f1 num2))
+
+(define-key-resolver #\[ #\Q (num &optional num2)
+  (assert (= num 1))
+  (maybe-combo :f2 num2))
+
+(define-key-resolver #\[ #\S (num &optional num2)
+  (assert (= num 1))
+  (maybe-combo :f4 num2))
+
+;;; This is a key in the center the numeric pad.
+(define-key-resolver #\[ #\E (num &optional num2)
+  (assert (= num 1))
+  (maybe-combo :center num2))
+
+(define-key-resolver #\[ #\F (num &optional num2)
+  (assert (= num 1))
+  (maybe-combo :end num2))
+
+(define-key-resolver #\[ #\H (num &optional num2)
+  (assert (= num 1))
+  (maybe-combo :home num2))
+
+;;; This is ambiguous, MOD+F3 may be easily confused with the cursor position
+;;; event. Cursor position reports are far more important, so we disable this.
+#+ (or)
+(define-key-resolver #\[ #\R (num &optional num2)
+  (assert (= num 1))
+  (maybe-combo :f3 num2))
 
 (define-key-resolver #\[ #\R (row col)
   (if *request-terminal-size*
@@ -428,7 +467,7 @@ Returns a generalized boolean (when true returns an event)."
 
 (defun deletep (ch)
   (when (char= ch +delete+)
-    (make-instance 'keyboard-event :key :escape :mods 0)))
+    (make-instance 'keyboard-event :key :delete :mods 0)))
 
 (defun read-input (&optional (waitp nil))
   ;; READ-CHAR may read more than one byte and return an alphanumeric
