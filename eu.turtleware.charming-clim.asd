@@ -56,6 +56,7 @@
   :pathname "Examples"
   :components ((:file "examples")
                (:file "l0-example")
+               (:file "l0-input")
                (:file "l1-example")
                (:file "l1-wool")))
 
