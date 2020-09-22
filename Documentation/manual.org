@@ -271,11 +271,6 @@ representing pressed modifiers and ~state~ which denotes the kind of event.
 
 ~state~ is one of ~:motion~, ~:press~ and ~:release~.
 
-Depending on the state, the exact event class is one of
-~pointer-motion-event~, ~pointer-press-event~ or
-~pointer-release-event~. These classes are specified for the programmer
-convenience and inherit from the class ~pointer-event~.
-
 * Level 1: Console
 
 The console is an instance of the class ~console~ which is used as an

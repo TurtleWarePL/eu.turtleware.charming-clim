@@ -216,10 +216,6 @@
    (state :initarg :state :accessor state))
   (:default-initargs :mods 0 :btn :none :state :motion))
 
-(defclass pointer-motion-event  (pointer-event) ())
-(defclass pointer-press-event   (pointer-event) ())
-(defclass pointer-release-event (pointer-event) ())
-
 (defvar *request-terminal-size* nil
   "When bound to T, cursor position report returns TERMINAL-RESIZE-EVENT.")
 
@@ -433,10 +429,7 @@ Returns a generalized boolean (when true returns an event)."
                (#b1001 :extra-2)
                (#b1010 :extra-3)
                (#b1011 :extra-4))))
-    (make-instance (ecase state
-                     (:motion 'pointer-motion-event)
-                     (:press 'pointer-press-event)
-                     (:release 'pointer-release-event))
+    (make-instance 'pointer-event
                    :row row :col col :btn btn :mods mods :state state)))
 
 (defun parse-escape-sequence (&aux char)

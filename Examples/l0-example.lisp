@@ -41,15 +41,16 @@
                    ((or character l0:keyboard-event)
                     (when (l0:keyp event #\q)
                       (exit-frame)))
-                   (l0:pointer-press-event
-                    (setf armed (hoverp event)))
-                   (l0:pointer-release-event
-                    (when (and armed (hoverp event))
-                      (exit-frame))
-                    (setf armed nil))
-                   (l0:pointer-motion-event
-                    (setf hover (hoverp event))))))))
-  (finish-output l0:*terminal*))
+                   (l0:pointer-event
+                    (case (l0:state event)
+                      (:press
+                       (setf armed (hoverp event)))
+                      (:release
+                       (when (and armed (hoverp event))
+                         (exit-frame))
+                       (setf armed nil))
+                      (:motion
+                       (setf hover (hoverp event)))))))))))
 
 (defun start-l0 ()
   (let* ((l0:*terminal* *terminal-io*)

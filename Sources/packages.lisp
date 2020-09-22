@@ -39,10 +39,7 @@
            #:cursor-position-event #:row #:col
            #:terminal-resize-event #:rows #:cols
            #:keyboard-event #:key #:kch #:mods
-           #:pointer-event #:row #:col #:btn #:mods #:state
-           #:pointer-motion-event
-           #:pointer-press-event
-           #:pointer-release-event))
+           #:pointer-event #:row #:col #:btn #:mods #:state))
 
 (defpackage #:eu.turtleware.charming-clim/l1
   (:export #:*console* #:*buffer*)
