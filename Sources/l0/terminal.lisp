@@ -214,7 +214,7 @@
    (btn :initarg :btn :accessor btn)
    (mods :initarg :mods :accessor mods)
    (state :initarg :state :accessor state))
-  (:default-initargs :mods 0))
+  (:default-initargs :mods 0 :btn :none :state :motion))
 
 (defclass pointer-motion-event  (pointer-event) ())
 (defclass pointer-press-event   (pointer-event) ())
