@@ -39,9 +39,9 @@
                (:module "l1"
                 :depends-on ("packages" "l0")
                 :components ((:file "drawing")
-                             (:file "cursor")
-                             (:file "output" :depends-on ("drawing" "cursor"))
                              (:file "input")
+                             (:file "cursor" :depends-on ("input"))
+                             (:file "output" :depends-on ("drawing" "cursor"))
                              (:file "surface" :depends-on ("output"))
                              (:file "console" :depends-on ("cursor" "output"))))
                (:module "l2"

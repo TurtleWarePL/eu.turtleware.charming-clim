@@ -350,18 +350,18 @@ Cursor can have multiple purposes:
 
 - pen      :: defines a drawing style
 - position :: stores current row and column
-- input    :: store data associated with a cursor
-- marker   :: direct user attention at the cell
-- pointer  :: select a cell on the screen
+- input    :: stores data associated with a cursor
+- marker   :: directs user attention at the cell
+- pointer  :: selects a cell in the buffer
 
 The cursor protocol:
 
-- cursor-enabledp, change-cursor-enabledp   :: gf
-- cursor-visiblep, change-cursor-visiblep   :: gf
-- cursor-position, change-cursor-position   :: gf
-- cursor-inks,     change-cursor-inks       :: gf
-- cursor-text,     change-cursor-text       :: gf
-- cursor-data,     change-cursor-data       :: gf
+- cursor-enabledp, change-cursor-enabledp   :: gf (is cursor enabled?)
+- cursor-visiblep, change-cursor-visiblep   :: gf (visibility)
+- cursor-position, change-cursor-position   :: gf (position in the buffer)
+- cursor-inks,     change-cursor-inks       :: gf (color)
+- cursor-text,     change-cursor-text       :: gf (text style)
+- cursor-data,     change-cursor-data       :: gf (cursor-specific data)
 - cursor                                    :: class
 - :cep :cvp :row :col :fgc :bgc :txt :obj   :: initargs
 
@@ -462,7 +462,7 @@ Surface protocol:
 - row0, col0 :: scroll offset
 - (:row0 0), (:col0 0), :r1, :c1, :r2, :c2, (:sink *buffer*) :: initargs
 
-Do determine actual size of the surface it is enough to call appropriate
+To determine actual size of the surface it is enough to call appropriate
 ~output-buffer~ protocol functions.
 
 Helper functions:

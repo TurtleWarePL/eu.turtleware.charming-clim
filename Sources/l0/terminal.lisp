@@ -502,3 +502,23 @@ Returns a generalized boolean (when true returns an event)."
                             (:c  +ctrl-mod+)
                             (:a  +alt-mod*+)
                             (:s  +shift-mod+))))))
+
+(defmacro key-case (event &body clauses)
+  `(cond ,@(mapcar (lambda (clause)
+                    (let* ((test (car clause))
+                           (real-test
+                             (if (member test '(otherwise t))
+                                 t
+                                 `(keyp ,event ,@(alexandria:ensure-list test)))))
+                      `(,real-test ,@(cdr clause))))
+                  clauses)))
+
+(defmacro letf (bindings &body body)
+  (loop for (place value) in bindings
+        for old-val = (gensym)
+        collect `(,old-val ,place)      into saves
+        collect `(setf ,place ,value)   into store
+        collect `(setf ,place ,old-val) into restore
+        finally (return `(let (,@saves)
+                           (unwind-protect (progn ,@store ,@body)
+                             ,@restore)))))

@@ -27,16 +27,6 @@
        (declare (dynamic-extent (function ,fn)))
        (invoke-with-clipping ,buffer (function ,fn) ,@opts))))
 
-(defmacro letf (bindings &body body)
-  (loop for (place value) in bindings
-        for old-val = (gensym)
-        collect `(,old-val ,place)      into saves
-        collect `(setf ,place ,value)   into store
-        collect `(setf ,place ,old-val) into restore
-        finally (return `(let (,@saves)
-                           (unwind-protect (progn ,@store ,@body)
-                             ,@restore)))))
-
 
 (defvar *buffer*)
 
