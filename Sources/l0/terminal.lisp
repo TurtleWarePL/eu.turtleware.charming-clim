@@ -289,12 +289,18 @@ Returns a generalized boolean (when true returns an event)."
            ,@body)))
 
 (defun maybe-combo (key num2)
-  (alexandria:if-let ((ctrl (and (characterp key) (controlp key))))
-    (prog1 ctrl
-      (setf (mods ctrl) (logior (1- num2) +ctrl-mod+)))
-    (if (null num2)
-        (make-instance 'keyboard-event :key key :mods 0)
-        (make-instance 'keyboard-event :key key :mods (1- num2)))))
+  (let ((mod (if (null num2)
+                 0
+                 (- num2 1))))
+    (unless (or (eq +alt-mod+ +alt-mod*+)
+               (zerop (logand mod +alt-mod*+)))
+      (decf mod +alt-mod*+)
+      (incf mod +alt-mod+))
+    (alexandria:if-let ((ctrl (and (characterp key) (controlp key))))
+      (prog1 ctrl
+        (setf (mods ctrl)
+              (logior mod (mods ctrl))))
+      (make-instance 'keyboard-event :key key :mods mod))))
 
 (define-key-resolver #\[ #\~ (num1 &optional num2)
   (let ((key (case num1
