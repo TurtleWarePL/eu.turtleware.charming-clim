@@ -40,9 +40,8 @@
 ;;; This function draws "drawing cursors", that is the pointer and its
 ;;; mirrored versions. It is used both to draw cursors and to modify a buffer,
 ;;; the rendering mode is specified as the third argument.
-(defun draw-cursors (x y mode)
+(defun draw-cursors (cur mode)
   (let* ((buf l1:*buffer*)
-         (cur (fm::ptr buf))
          (crow (/ (1+ (fm::rows buf)) 2))
          (ccol (/ (1+ (fm::cols buf)) 2))
          (row (fm::row cur))
@@ -96,11 +95,12 @@
 
 (defmethod fm::flush-output :after ((client wool) &rest args)
   (declare (ignore args))
-  (draw-cursors 40 80 :dir))
+  (draw-cursors (fm::ptr client) :dir)
+  (draw-cursors (fm::vrt client) :dir))
 
 (defmethod l1:handle-event :after ((client wool) (event l0:pointer-event))
   (when (eq :left (l0:btn event))
-    (draw-cursors 40 80 :buf)))    
+    (draw-cursors (fm::pointer event) :buf)))
 
 (defun start-wool ()
   (l1:with-console (:ios *terminal-io* :console-class 'wool)

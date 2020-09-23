@@ -214,11 +214,12 @@
    (btn :initarg :btn :accessor btn)
    (mods :initarg :mods :accessor mods)
    (state :initarg :state :accessor state))
-  (:default-initargs :mods 0 :btn :none :state :motion))
+  (:default-initargs :row 1 :col 1 :mods 0 :btn :none :state :motion))
 
 (defclass pointer-event (event pointer-state-mixin)
-  ()
-  (:default-initargs :mods 0 :btn :none :state :motion))
+  ;; KLUDGE necessary to distinguish pointers in l1
+  ((pointer :initarg :pointer :accessor pointer))
+  (:default-initargs :pointer nil))
 
 (defvar *request-terminal-size* nil
   "When bound to T, cursor position report returns TERMINAL-RESIZE-EVENT.")

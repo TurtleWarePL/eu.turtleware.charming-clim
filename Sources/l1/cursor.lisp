@@ -155,21 +155,6 @@
 (defclass %pointer (cursor pointer-state-mixin) ()
   (:documentation "A pointer."))
 
-(defmethod handle-event :after ((client %pointer) (event pointer-event))
-  (change-cursor-data client event)
-  (change-cursor-position client (row event) (col event))
-  (setf (state client) :motion
-        (mods client) (mods event))
-  ;; Wheel events report only "press" (never a release or a motion) - we
-  ;; assume them to be a singular events, so the pointer button after the
-  ;; event is :none. When we release a button the situation is similar.
-  (let ((event-btn (btn event)))
-    (if (or (member event-btn
-                    '(:wheel-up :wheel-down :wheel-left :wheel-right))
-            (eq (state event) :release))
-        (setf (btn client) :none)
-        (setf (btn client) event-btn))))
-
 
 (defclass pointer (%pointer) ()
   (:documentation "The physical pointer.")
@@ -184,5 +169,15 @@
   (unless (eq enabledp (cursor-enabledp cur))
     (set-mouse-tracking enabledp)))
 
-(defclass vpointer (cursor) ()
-  (:documentation "The virtual pointer."))
+
+(defclass vpointer (%pointer)
+  ((event :initarg :event :reader last-event))
+  (:documentation "The virtual pointer.")
+  (:default-initargs :fgc #x00ff00ff :bgc #x22222200
+                     :event (make-instance 'pointer-event :row 1 :col 1)))
+
+(defmethod initialize-instance :after
+    ((instance vpointer) &rest args)
+  (declare (ignore args))
+  (setf (slot-value instance 'event)
+        (make-instance 'pointer-event :pointer instance)))

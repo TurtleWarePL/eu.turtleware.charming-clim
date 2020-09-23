@@ -21,6 +21,8 @@
 (defun process-next-event (&optional waitp)
   (finish-output *terminal*)
   (alexandria:when-let ((event (read-input waitp)))
+    (when (typep event 'pointer-event)
+      (setf (pointer event) (ptr *console*)))
     (handle-event *console* event)
     event))
 

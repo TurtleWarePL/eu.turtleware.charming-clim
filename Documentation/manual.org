@@ -383,14 +383,18 @@ The pointer cursor maintains the last state of the pointer reported by the
 terminal. Enabling the pointer sets the mouse tracking. The associated data is
 the last pointer event.
 
+The pointer maintains a state which has the same accessors as ~pointer-event~,
+however it may be different from the last event. For instance the event
+"release, left button" leaves the pointer in a state "motion, no button".
+
 *** Virtual pointer cursor
 
 Not all terminal emulators allow tracking the pointer. In order to mitigate
 that state a virtual pointer is implemented which is manipualted by pressing
-the control key and (by default) the keypad function keys. When the pointer is
-disabled they are not interpreted. The associated data is a synthesized
-pointer event. It is possible for both pointer cursors to be enabled at the
-same time.
+the control key and (by default) the keypad function keys. The associated data
+is a synthesized pointer event.
+
+It is possible for both pointer cursors to be enabled at the same time.
 
 *** Buffer cursor
 
