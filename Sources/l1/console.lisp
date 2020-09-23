@@ -65,16 +65,17 @@
 ;;; mode, so they don't modify the actual buffered cell. When we move cursor
 ;;; we want to "see" its previous content.
 (defun show-cursors (console)
-  (let* ((ptr (ptr console))
-         (row (row ptr))
-         (col (col ptr))
-         (txt (txt ptr))
-         (chr (chr (get-cell console row col))))
+  (flet ((show-cursor (ptr)
+           (when (and (cep ptr) (cvp ptr))
+             (let ((row (row ptr))
+                   (col (col ptr))
+                   (txt (txt ptr))
+                   (fgc (fgc ptr))
+                   (bgc (bgc ptr)))
+               (out (:row row :col col :txt txt :fgc fgc :bgc bgc) ptr)))))
     (letf (((mode console) :dir))
-      (out (:row row :col col :txt txt :fgc #xff0000ff)
-           (if (char= chr #\space)
-               #\X
-               chr)))))
+      (show-cursor (ptr console))
+      (show-cursor (vrt console)))))
 
 (defmethod flush-output ((buffer console) &rest args &key force)
   (declare (ignore args))
