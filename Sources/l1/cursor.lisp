@@ -151,9 +151,29 @@
     (set-text-style diff)))
 
 
-(defclass pointer (cursor) ()
-  (:documentation "The pointer.")
-  (:default-initargs :fgc #xff8888ff :bgc #x88ffffff))
+;;; Slots ROW and COL coalasce from both superclasses.
+(defclass %pointer (cursor pointer-state-mixin) ()
+  (:documentation "A pointer."))
+
+(defmethod handle-event :after ((client %pointer) (event pointer-event))
+  (change-cursor-data client event)
+  (change-cursor-position client (row event) (col event))
+  (setf (state client) :motion
+        (mods client) (mods event))
+  ;; Wheel events report only "press" (never a release or a motion) - we
+  ;; assume them to be a singular events, so the pointer button after the
+  ;; event is :none. When we release a button the situation is similar.
+  (let ((event-btn (btn event)))
+    (if (or (member event-btn
+                    '(:wheel-up :wheel-down :wheel-left :wheel-right))
+            (eq (state event) :release))
+        (setf (btn client) :none)
+        (setf (btn client) event-btn))))
+
+
+(defclass pointer (%pointer) ()
+  (:documentation "The physical pointer.")
+  (:default-initargs :fgc #xff0000ff :bgc #x00000000))
 
 (defmethod initialize-instance :after
     ((instance pointer) &rest args)

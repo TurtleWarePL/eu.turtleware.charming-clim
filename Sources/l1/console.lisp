@@ -134,11 +134,7 @@
     (set-cursor-position (row cur) (col cur))))
 
 (defmethod handle-event :before ((client console) (event pointer-event))
-  (let ((ptr (ptr client))
-        (row (row event))
-        (col (col event)))
-    (change-cursor-position ptr row col)
-    (change-cursor-data ptr event)))
+  (handle-event (ptr client) event))
 
 (defmethod handle-event :before ((client console) (event terminal-resize-event))
   (let ((rows (rows event))
