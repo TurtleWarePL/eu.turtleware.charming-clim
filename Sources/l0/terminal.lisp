@@ -208,12 +208,16 @@
    (mods :initarg :mods :accessor mods))
   (:default-initargs :mods 0 :kch nil))
 
-(defclass pointer-event (event)
+(defclass pointer-state-mixin ()
   ((row :initarg :row :accessor row)
    (col :initarg :col :accessor col)
    (btn :initarg :btn :accessor btn)
    (mods :initarg :mods :accessor mods)
    (state :initarg :state :accessor state))
+  (:default-initargs :mods 0 :btn :none :state :motion))
+
+(defclass pointer-event (event pointer-state-mixin)
+  ()
   (:default-initargs :mods 0 :btn :none :state :motion))
 
 (defvar *request-terminal-size* nil
@@ -242,9 +246,9 @@
       (setf +alt-mod+ +meta-mod+)
       (setf +alt-mod+ +alt-mod*+)))
 
-(defmethod print-object ((o pointer-event) s)
+(defmethod print-object ((o pointer-state-mixin) s)
   (print-unreadable-object (o s :type t :identity nil)
-    (format s "~s ~s [~s] [~s]" (row o) (col o) (btn o)
+    (format s "~s ~s ~a [~s] [~s]" (row o) (col o) (state o) (btn o)
             (decode-mods (mods o)))))
 
 (defmethod print-object ((o keyboard-event) s)
