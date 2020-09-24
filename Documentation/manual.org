@@ -390,11 +390,25 @@ however it may be different from the last event. For instance the event
 *** Virtual pointer cursor
 
 Not all terminal emulators allow tracking the pointer. In order to mitigate
-that state a virtual pointer is implemented which is manipualted by pressing
-the control key and (by default) the keypad function keys. The associated data
-is a synthesized pointer event.
+that state a virtual pointer is implemented which is manipulated with the
+keybaord. The associated data is a synthesized pointer event. It is possible
+for both pointer cursors to be enabled at the same time.
 
-It is possible for both pointer cursors to be enabled at the same time.
+Available gestures:
+- <arrow-key> :: move the pointer
+- C-<arrow-key> :: move the pointer with "pressed" left button
+- <insert> <center> <delete> :: button click left, middle, right
+- <home> <end> <pgup> <pgdn> :: wheel scroll left, right, up, down
+- M-<arrow-up> :: reset the cursor position to [1,1]
+- M-<arrow-down> :: untoggle all toggled buttons and modifiers
+- M-<arrow-left> :: toggle control
+- M-<arrow-right> :: toggle meta ; truly meta :_)
+- M-<insert> M-<center> M-<delete> :: toggle press left, middle, right
+- M-<home> M-<end> M-<pgup> M-<pgdn> :: toggle "extra" buttons 1-4
+
+Only one button may be toggled at the same time (so toggling another button
+releases the first one). Moving the cursor with ~C-<arrow-key>~ shadows the
+toggled button while moving the cursor with ~<arrow-key>~ restores it.
 
 *** Buffer cursor
 
