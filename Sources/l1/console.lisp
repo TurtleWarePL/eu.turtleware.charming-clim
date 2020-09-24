@@ -74,7 +74,9 @@
                    (txt (txt ptr))
                    (fgc (fgc ptr))
                    (bgc (bgc ptr)))
-               (out (:row row :col col :txt txt :fgc fgc :bgc bgc) ptr)))))
+               (out (:row row :col col :txt txt :fgc fgc :bgc bgc) ptr)
+               (out (:row (1+ row) :col col :txt txt :fgc fgc :bgc bgc)
+                    (cursor-data ptr))))))
     (letf (((mode console) :dir))
       (show-cursor (ptr console))
       (show-cursor (vrt console)))))
@@ -156,9 +158,8 @@
     ;; assume them to be a singular events, so the pointer button after the
     ;; event is :none. When we release a button the situation is similar.
     (let ((event-btn (btn event)))
-      (if (or (member event-btn
-                      '(:wheel-up :wheel-down :wheel-left :wheel-right))
-              (eq (state event) :release))
+      (if (member event-btn
+                  '(:wheel-up :wheel-down :wheel-left :wheel-right))
           (setf (btn ptr) :none)
           (setf (btn ptr) event-btn)))))
 
@@ -190,45 +191,82 @@
     (when (keyp key :page-down :m)
       (change-cursor-enabledp vptr t))
     (return-from handle-vptr))
-  (let ((event (last-event vptr)))
-    (flet ((click (btn)
-             (letf (((btn event) btn))
-               (setf (state event) :press)
-               (handle-event client event)
-               (setf (state event) :release)
-               (handle-event client event)))
-           (press (btn)
-             (letf (((btn event) btn)
-                    ((state event) :press))
-               (handle-event client event)))
-           (move (row-dx col-dx)
-             (setf (state event) :motion)
-             (incf (row event) row-dx)
-             (incf (col event) col-dx)
-             (handle-event client event))
-           (move* (row-dx col-dx btn)
-             (letf (((btn event) btn))
+  (let ((event (cursor-data vptr))
+        (toggled (toggled-btn vptr)))
+    (labels ((click (btn)
+               (letf (((btn event) btn))
+                 (setf (state event) :press)
+                 (handle-event client event)
+                 (setf (state event) :release)
+                 (handle-event client event)))
+             (press (btn)
+               (letf (((btn event) btn)
+                      ((state event) :press))
+                 (handle-event client event)))
+             (release (btn)
+               (letf (((btn event) btn)
+                      ((state event) :release))
+                 (handle-event client event)))
+             (move (row-dx col-dx &aux (btn (btn event)))
+               (unless (eql btn toggled)
+                 (unless (eql btn :none)
+                   (release btn))
+                 (setf (btn event) toggled))
                (setf (state event) :motion)
                (incf (row event) row-dx)
                (incf (col event) col-dx)
-               (handle-event client event)))
-           (toggle-btn (btn)
-             (if (eq (btn event) btn)
-                 (setf (btn event) :none
-                       (state event) :release)
-                 (setf (btn event) btn
-                       (state event) :press))
-             (handle-event client event))
-           (toggle (mod)
-             (setf (mods event)
-                   (logxor (mods event) mod)))
-           (option (name)
-             (ecase name
-               (:pos (change-cursor-position vptr 1 1)
-                (setf (row event) 1
-                      (col event) 1))
-               (:key (setf (btn event) :none
-                           (mods event) 0)))))
+               (handle-event client event))
+             (move* (row-dx col-dx btn)
+               (unless (eql btn (btn event))
+                 (unless (eql btn toggled)
+                   (press btn))
+                 (setf (btn event) btn))
+               (setf (state event) :motion)
+               (incf (row event) row-dx)
+               (incf (col event) col-dx)
+               (handle-event client event))
+             (toggle-btn (btn)
+               ;; We can't toggle "none" and "wheel" buttons.
+               (check-type btn (member :left :right :middle
+                                       :extra-1 :extra-2 :extra-3 :extra-4))
+               (cond ((eq toggled btn)
+                      (setf (toggled-btn vptr) :none)
+                      (setf (btn event) :none)
+                      (setf (state event) :release)
+                      (handle-event client event))
+                     ((eq toggled :none)
+                      (setf (toggled-btn vptr) btn)
+                      (setf (btn event) btn)
+                      (setf (state event) :press)
+                      (handle-event client event))
+                     (t
+                      ;; Release the old toggle.
+                      (setf (btn event) toggled)
+                      (setf (state event) :release)
+                      (handle-event client event)
+                      ;; Press the new toggle.
+                      (setf (toggled-btn vptr) btn)
+                      (setf (btn event) btn)
+                      (setf (state event) :press)
+                      (handle-event client event))))
+             (toggle (mod)
+               (setf (mods event)
+                     (logxor (mods event) mod)))
+             (option (name)
+               (ecase name
+                 (:pos
+                  (change-cursor-position vptr 1 1)
+                  (setf (row event) 1
+                        (col event) 1))
+                 (:key
+                  (when (toggled-btn vptr)
+                    (setf (btn event) toggled)
+                    (setf (state event) :release)
+                    (handle-event client event))
+                  (setf (toggled-btn vptr) :none
+                        (btn event) :none
+                        (state event) :motion
+                        (mods event) 0)))))
       (key-case key
         ;; Cursor manipulation
         (:key-up         (move -1 00))         ; move up

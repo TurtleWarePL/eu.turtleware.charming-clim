@@ -152,11 +152,13 @@
 
 
 ;;; Slots ROW and COL coalasce from both superclasses.
-(defclass %pointer (cursor pointer-state-mixin) ()
+(defclass %pointer (cursor pointer-state-mixin)
+  ()
   (:documentation "A pointer."))
 
 
-(defclass pointer (%pointer) ()
+(defclass pointer (%pointer)
+  ()
   (:documentation "The physical pointer.")
   (:default-initargs :fgc #xff0000ff :bgc #x00000000))
 
@@ -171,13 +173,13 @@
 
 
 (defclass vpointer (%pointer)
-  ((event :initarg :event :reader last-event))
+  ((toggled-btn :initarg :toggled-btn :accessor toggled-btn))
   (:documentation "The virtual pointer.")
   (:default-initargs :fgc #x00ff00ff :bgc #x22222200
-                     :event (make-instance 'pointer-event :row 1 :col 1)))
+                     :toggled-btn :none))
 
 (defmethod initialize-instance :after
     ((instance vpointer) &rest args)
   (declare (ignore args))
-  (setf (slot-value instance 'event)
-        (make-instance 'pointer-event :pointer instance)))
+  (change-cursor-data instance
+                      (make-instance 'pointer-event :pointer instance)))
