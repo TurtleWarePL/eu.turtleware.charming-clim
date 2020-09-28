@@ -152,7 +152,7 @@
 
 
 ;;; Slots ROW and COL coalasce from both superclasses.
-(defclass %pointer (cursor pointer-state-mixin)
+(defclass %pointer (cursor)
   ()
   (:documentation "A pointer."))
 

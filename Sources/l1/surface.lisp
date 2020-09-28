@@ -113,3 +113,9 @@
   (incf (r2 buf) row-dx)
   (incf (c1 buf) col-dx)
   (incf (c2 buf) col-dx))
+
+(defun reshape-buffer (buf r1 c1 r2 c2)
+  (setf (r1 buf) r1)
+  (setf (c1 buf) c1)
+  (setf (r2 buf) r2)
+  (setf (c2 buf) c2))

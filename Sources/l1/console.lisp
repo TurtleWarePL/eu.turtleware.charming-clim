@@ -59,7 +59,7 @@
   (setf (hnd instance) (init-terminal))
   (setf (cur instance) (make-instance 'tcursor :cvp nil :fgc fgc :bgc bgc))
   (setf (ptr instance) (make-instance 'pointer :cvp t :cep t))
-  (setf (vrt instance) (make-instance 'vpointer :cvp t :cep t))
+  (setf (vrt instance) (make-instance 'vpointer :cvp t :cep nil))
   (set-alt-is-meta t)
   (process-available-events t))
 
@@ -153,19 +153,10 @@
                   :initial-element nil)))
 
 (defmethod handle-event ((client console) (event pointer-event))
-  (let ((ptr (pointer event)))
+  (let ((ptr (pointer event))
+        (btn (btn event)))
     (change-cursor-data ptr event)
-    (change-cursor-position ptr (row event) (col event))
-    (setf (state ptr) :motion
-          (mods ptr) (mods event))
-    ;; Wheel events report only "press" (never a release or a motion) - we
-    ;; assume them to be a singular events, so the pointer button after the
-    ;; event is :none. When we release a button the situation is similar.
-    (let ((event-btn (btn event)))
-      (if (member event-btn
-                  '(:wheel-up :wheel-down :wheel-left :wheel-right))
-          (setf (btn ptr) :none)
-          (setf (btn ptr) event-btn)))))
+    (change-cursor-position ptr (row event) (col event))))
 
 (defmethod handle-event ((client console) (event keyboard-event))
   (cond ((keyp event #\Q :c)
@@ -203,11 +194,11 @@
                  (setf (row event) row
                        (col event) col)))
              (click (btn)
-               (letf (((btn event) btn))
-                 (setf (state event) :press)
-                 (handle-event client event)
-                 (setf (state event) :release)
-                 (handle-event client event)))
+               (setf (btn event) btn)
+               (setf (state event) :press)
+               (handle-event client event)
+               (setf (state event) :release)
+               (handle-event client event))
              (press (btn)
                (letf (((btn event) btn)
                       ((state event) :press))
@@ -240,7 +231,6 @@
                                        :extra-1 :extra-2 :extra-3 :extra-4))
                (cond ((eq toggled btn)
                       (setf (toggled-btn vptr) :none)
-                      (setf (btn event) :none)
                       (setf (state event) :release)
                       (handle-event client event))
                      ((eq toggled :none)
