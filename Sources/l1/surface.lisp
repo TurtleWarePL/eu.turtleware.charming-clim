@@ -6,6 +6,9 @@
    (col0 :initarg :col0 :accessor col0 :documentation "Scroll col offset"))
   (:default-initargs :row0 0 :col0 0 :sink *buffer*))
 
+(defun offset (surface)
+  (values (row0 surface) (col0 surface)))
+
 (defmethod direct-cursor ((buffer surface) &aux (sink (sink buffer)))
   (ecase (mode sink)
     ((:buf :wrt)
@@ -39,8 +42,7 @@
   (remf cursor-args :row)
   (remf cursor-args :col)
   (multiple-value-bind (r1 c1 r2 c2) (bbox buf)
-    (let ((row0 (row0 buf))
-          (col0 (col0 buf)))
+    (multiple-value-bind (row0 col0) (offset buf)
       (iterate-cells (chr crow ccol wrap-p)
           (buf row col (string str))
         (when (inside-p buf row col)
@@ -118,4 +120,5 @@
   (setf (r1 buf) r1)
   (setf (c1 buf) c1)
   (setf (r2 buf) r2)
-  (setf (c2 buf) c2))
+  (setf (c2 buf) c2)
+  (scroll-buffer buf 0 0))

@@ -152,11 +152,15 @@
                   (list rows cols)
                   :initial-element nil)))
 
-(defmethod handle-event ((client console) (event pointer-event))
+(defmethod handle-event :before ((client console) (event pointer-event))
   (let ((ptr (pointer event))
         (btn (btn event)))
     (change-cursor-data ptr event)
     (change-cursor-position ptr (row event) (col event))))
+
+(defmethod handle-event :before ((client console) (event keyboard-event))
+  ;; Handle the virtual pointer.
+  (handle-vptr client (vrt client) event))
 
 (defmethod handle-event ((client console) (event keyboard-event))
   (cond ((keyp event #\Q :c)
@@ -168,9 +172,8 @@
         ((keyp event #\R :c)
          (ctl (:ink #xffffffff #x00000000))
          (ctl (:clr 1 1 (rows *console*) (cols *console*)))
-         (process-available-events t))
-        ;; Handle the virtual pointer.
-        ((handle-vptr client (vrt client) event))))
+         (ctl (:fls :force t))
+         (process-available-events t))))
 
 ;;; Since the terminal does not handle key combinations (i.e C-a-b), because
 ;;; only characters arrive (and not press/release pairs), and because we want

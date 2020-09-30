@@ -46,7 +46,8 @@
   (:export #:with-console #:with-buffer #:bbox #:out #:ctl)
   (:export #:set-cell #:put-cell #:flush-output)
   (:export #:process-next-event #:process-available-events #:exit)
-  (:export #:console #:surface #:handle-event))
+  (:export #:console #:handle-event)
+  (:export #:surface #:sink #:offset))
 
 (defpackage #:eu.turtleware.charming-clim/l2
   (:export))

@@ -3,39 +3,7 @@
 ;;; Wool is an interactive generative art joke, enjoy! Inspired by a very
 ;;; entertaining application "Silk" available at http://weavesilk.com/.
 
-(defconstant +white+  #xffffffff)
-(defconstant +black+  #x000000ff)
-(defconstant +grey0+  #x888888ff)
-(defconstant +grey1+  #x444444ff)
-(defconstant +grey2+  #xbbbbbbff)
-(defconstant +purple+ #xff88ffff)
-(defconstant +blue+   #x8888ffff)
-
 ;;; Symmetry is the fool's aesthetics.
-
-(defun draw-text (string row col &key (align :left))
-  (flet ((do-it (row col)
-           (l1:out (:row row :col col) string)))
-    (ecase align
-      (:left   (do-it row col))
-      (:center (do-it row (- col (truncate (length string) 2))))
-      (:right  (do-it row (- col (length string)))))))
-
-(defun draw-peep (row col)
-  (loop for drow from -3 upto +3
-        do (loop for dcol from -3 upto +3
-                 do (if (and (<= (+ (abs dcol) (abs drow)) 3)
-                             (>= (+ (abs dcol) (abs drow)) 2))
-                        (l1:out (:row (+ row drow)
-                                 :col (+ col (* 2 dcol))
-                                 :fgc +purple+
-                                 :bgc +black+)
-                                (ax:random-elt '("HX" "30" "42")))
-                        (l1:out (:row (+ row drow)
-                                 :col (+ col (* 2 dcol))
-                                 :fgc +purple+
-                                 :bgc +black+)
-                                "  ")))))
 
 ;;; This function draws "drawing cursors", that is the pointer and its
 ;;; mirrored versions. It is used both to draw cursors and to modify a buffer,
