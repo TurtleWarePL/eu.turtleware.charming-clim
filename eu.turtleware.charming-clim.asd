@@ -57,7 +57,8 @@
   :components ((:file "examples")
                (:file "l0-example")
                (:file "l0-input")
-               (:file "l1-wool")))
+               (:file "l1-wool")
+               (:file "l1-surfaces")))
 
 (defsystem "eu.turtleware.charming-clim/demo"
   :license "BSD-2-Clause"
