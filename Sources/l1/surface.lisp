@@ -10,11 +10,7 @@
   (values (row0 surface) (col0 surface)))
 
 (defmethod direct-cursor ((buffer surface) &aux (sink (sink buffer)))
-  (ecase (mode sink)
-    ((:buf :wrt)
-     (buffer-cursor sink))
-    (:dir
-     (direct-cursor sink))))
+  (buffer-cursor sink))
 
 (defmethod initialize-instance :after
     ((buf surface) &key data rows cols r1 c1 r2 c2)
