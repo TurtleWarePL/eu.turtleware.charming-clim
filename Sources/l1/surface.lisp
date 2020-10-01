@@ -50,6 +50,8 @@
 
 (defmethod flush-output ((buffer surface) &rest args &key force)
   (declare (ignore args))
+  (when (eq (mode buffer) :dir)
+    (return-from flush-output))
   (loop for row from 1 upto (rows buffer)
         do (loop for col from 1 upto (cols buffer)
                  for cell = (get-cell buffer row col)
