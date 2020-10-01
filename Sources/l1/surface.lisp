@@ -57,7 +57,8 @@
                    do (put-cell buffer (chr cell) :row row
                                                   :col col
                                                   :fgc (fgc cell)
-                                                  :bgc (bgc cell))
+                                                  :bgc (bgc cell)
+                                                  :txt (txt cell))
                       (setf (dirty-p cell) nil))))
 
 (defun move-to-row (buf row0)
