@@ -57,8 +57,8 @@
   (set-cvp visiblep cur))
 
 (defmethod change-cursor-position ((cur cursor) row col)
-  (set-row row cur)
-  (set-col col cur))
+  (when row (set-row row cur))
+  (when col (set-col col cur)))
 
 (defmethod cursor-position ((cur cursor))
   (values (row cur) (col cur)))
@@ -74,7 +74,8 @@
   (values (fgc pen) (bgc pen)))
 
 (defmethod change-cursor-text ((pen cursor) txt)
-  (setf (txt pen) (fuze-text-style txt (txt pen))))
+  (when txt
+    (setf (txt pen) (fuze-text-style txt (txt pen)))))
 
 (defmethod cursor-text ((pen cursor))
   (txt pen))
