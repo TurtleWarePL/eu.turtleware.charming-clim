@@ -178,28 +178,35 @@
     (return-from l1:handle-event))
   (let ((ptr (fm::pointer event))
         (row (l0:row event))
-        (col (l0:col event)))
+        (col (l0:col event))
+        (mpt (moving-pointers object))
+        (rpt (resize-pointers object)))
     (ecase (l0:state event)
       (:press
        (case (inside-p object row col t)
-         (:move   (setf (gethash ptr (moving-pointers object))
-                        (cons row col)))
-         (:resize (setf (gethash ptr (resize-pointers object))
-                        t))))
+         (:move   (setf (gethash ptr mpt) (cons row col)))
+         (:resize (setf (gethash ptr rpt) t))))
       (:release
-       (remhash ptr (moving-pointers object))
-       (remhash ptr (resize-pointers object)))
+       (remhash ptr mpt)
+       (remhash ptr rpt))
       (:motion
-       (if (gethash ptr (resize-pointers object))
+       (if (gethash ptr rpt)
            (fm::reshape-buffer object
                                (fm::r1 object)
                                (fm::c1 object)
                                (- row 1)
                                (- col 2))
-           (ax:when-let ((pos (gethash ptr (moving-pointers object))))
-             (fm::move-buffer object
-                              (- row (car pos))
-                              (- col (cdr pos)))
+           (ax:when-let ((pos (gethash ptr mpt)))
+             (if (zerop (hash-table-count rpt))
+                 (fm::move-buffer object
+                                  (- row (car pos))
+                                  (- col (cdr pos)))
+                 ;; Don't move the bottom right corner during resize.
+                 (fm::reshape-buffer object
+                                     row
+                                     col
+                                     (fm::r2 object)
+                                     (fm::c2 object)))
              (setf (car pos) row
                    (cdr pos) col)))))))
 
