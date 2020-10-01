@@ -96,6 +96,14 @@
   (unless bcur
     (setf (bcur buf) (make-instance 'cursor :fgc fgc :bgc bgc))))
 
+(defun resize-buffer (buf rows cols)
+  (setf (rows buf) rows)
+  (setf (cols buf) cols)
+  (let ((clip (clip buf)))
+    (setf (r2 clip) rows
+          (c2 clip) cols))
+  (adjust-array (data buf) (list rows cols) :initial-element nil))
+
 (defmethod bbox ((o output-buffer))
   (values 1 1 (rows o) (cols o)))
 

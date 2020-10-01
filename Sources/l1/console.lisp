@@ -148,9 +148,7 @@
            (row (alexandria:clamp (row vptr) 1 rows))
            (col (alexandria:clamp (col vptr) 1 cols)))
       (change-cursor-position vptr row col))
-    (adjust-array (data client)
-                  (list rows cols)
-                  :initial-element nil)))
+    (resize-buffer client rows cols)))
 
 (defmethod handle-event :before ((client console) (event pointer-event))
   (let ((ptr (pointer event))

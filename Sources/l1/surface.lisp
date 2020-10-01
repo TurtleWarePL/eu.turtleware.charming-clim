@@ -121,4 +121,7 @@
   (setf (c1 buf) c1)
   (setf (r2 buf) r2)
   (setf (c2 buf) c2)
+  (resize-buffer buf
+                 (+ (- r2 r1) 1)
+                 (+ (- c2 c1) 1))
   (scroll-buffer buf 0 0))
