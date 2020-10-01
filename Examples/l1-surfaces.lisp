@@ -9,6 +9,9 @@
 ;;; - events are redirected to a focused/pressed surface
 ;;; - multiple pointers may be used simultaneously
 
+(defclass frame (l1:surface)
+  ())
+
 (defclass window (l1:surface)
   ((title
     :initarg :title
@@ -23,7 +26,23 @@
    ;; values are always T.
    (resize-pointers
     :initform (make-hash-table :test #'eq)
-    :accessor resize-pointers)))
+    :accessor resize-pointers)
+   ;; Frame is the actual application.
+   (frame
+    :accessor frame)))
+
+(defmethod initialize-instance :after ((object window) &rest args
+                                       &key fgc bgc r1 c1 r2 c2)
+  (declare (ignore args))
+  ;; The frame mode is direct, because we are not interested in buffering
+  ;; output that will be buffered (again) in the window.
+  (let ((rows (+ (- r2 r1) 1))
+        (cols (+ (- c2 c1) 1)))
+   (setf (frame object)
+         (make-instance 'frame :sink object :mode :dir
+                               :fgc fgc :bgc bgc
+                               :r1 2 :c1 3
+                               :r2 (- rows 1) :c2 (- cols 2)))))
 
 (defclass surface-manager (l1:console)
   ((surfaces
@@ -50,17 +69,18 @@
                              :sink object
                              :fgc +purple+
                              :bgc +grey1+
-                             :r1 3 :c1 6 :r2 9 :c2 19)
+                             :r1 2 :c1 4 :r2 10 :c2 21)
               (make-instance 'window
                              :title "Window 2"
                              :sink object
                              :fgc +black+
                              :bgc +grey2+
-                             :r1 13 :c1 10 :r2 19 :c2 23))))
+                             :r1 13 :c1 10 :r2 21 :c2 27))))
 
 (defun draw-decorations (surface)
   (multiple-value-bind (r1 c1 r2 c2) (l1:bbox surface)
-    (l1:with-buffer ((l1:sink surface))
+    (let ((rows (+ (- r2 r1) 1))
+          (cols (+ (- c2 c1) 1)))
       (block nil
         (ax:maphash-values (lambda (s)
                              (when (eq surface s)
@@ -68,20 +88,14 @@
                                (return)))
                            (pressed l1:*console*))
         (l1:ctl (:ink #x8800ff00 #xffff8800)))
-      (let* ((length (+ (- c2 c1) 5))
-             (hbar (make-string length :initial-element #\space))
+      (let* ((hbar (make-string cols :initial-element #\space))
              (title (title surface)))
-        (l1:out (:row (1- r1) :col (- c1 2)) hbar)
-        (l1:out (:row (1- r1) :col (- c1 2)) title)
+        (loop for r from 1 upto rows
+              do (l1:out (:row r :col 1) hbar))
+        (l1:out (:row 1 :col 1) title)
         (when (eq surface (focused l1:*console*))
-          (l1:out (:row (1- r1)
-                   :col (+ (- c1 2) (length title))
-                   :txt '(:blink t)) "█"))
-        (l1:out (:row (1+ r2) :col (- c1 2)) hbar)
-        (l1:out (:row (1+ r2) :col (+ c2 2)) "/"))
-      (loop for r from r1 upto r2
-            do (l1:out (:row r :col (- c1 2)) "  ")
-               (l1:out (:row r :col (+ c2 1)) "  ")))))
+          (l1:out (:row 1 :col (+ (length title) 1) :txt '(:blink t)) "█"))
+        (l1:out (:row rows :col cols) "/")))))
 
 ;;; A function of the same name (and similar purpose) will be introduced for
 ;;; display lists in the l2 module.
@@ -89,38 +103,47 @@
   (:method (object) nil))
 
 (defmethod handle-repaint ((object surface-manager))
-  (l1:ctl (:ink #x00000000 #x00000000)
+  (l1:ctl (:ink #xffffff00 #x00000000)
           (:clr 1 1 (l0:rows object) (l0:cols object)))
-  (mapc #'handle-repaint (reverse (surfaces object)))
+  (mapc (lambda (surface)
+          (handle-repaint surface)
+          #+ (or)
+          (multiple-value-bind (r1 c1 r2 c2) (l1:bbox surface)
+            (l1:out (:row r1 :col c1) "X")
+            (l1:out (:row r2 :col c2) "Y")))
+        (reverse (surfaces object)))
   (l1:flush-output object))
 
 (defmethod handle-repaint ((object window))
   (l1:with-buffer (object)
-    (draw-peep 1 1 nil)
-    ;; We need "force" here to reflush the background onto the sink that
-    ;; redraws its own background upon C-r. The more robust solution would be
-    ;; a protocol which allows signaling damaged regions to children. That
-    ;; will be implemented in the l2 module.
-    (l1:flush-output object :force t))
-  (draw-decorations object))
+    (draw-decorations object))
+  (handle-repaint (frame object))
+  ;; We need "force" here to reflush the background onto the sink that
+  ;; redraws its own background upon C-r. The more robust solution would be
+  ;; a protocol which allows signaling damaged regions to children. That
+  ;; will be implemented in the l2 module.
+  (l1:flush-output object :force t))
 
-(defun inside-p (surface row col &optional decorations)
+(defmethod handle-repaint ((object frame))
+  (l1:with-buffer (object)
+    (draw-peep 1 1 nil)))
+
+(defun inside-p (surface row col)
   (multiple-value-bind (r1 c1 r2 c2)
       (l1:bbox surface)
-    ;; +/- 1/2 is for decorations.
-    (cond ((and (<= r1 row r2)
-                (<= c1 col c2))
-           :surface)
-          ((null decorations)
+    (cond ((not (and (<= r1 row r2)
+                     (<= c1 col c2)))
            nil)
-          ((and (= row (+ r2 1))
-                (= col (+ c2 2)))
+          ((and (= row r2)
+                (= col c2))
            :resize)
-          ((and (<= (- r1 1) row (+ r2 1))
-                (<= (- c1 2) col (+ c2 2)))
+          ((or (= row r1)
+               (= row r2)
+               (<= col (+ c1 1))
+               (>= col (- c2 1)))
            :move)
           (t
-           nil))))
+           t))))
 
 ;;; Our event handling is quite simplistic. The pointer events left button
 ;;; press and left button release are used to set the pressed window, and the
@@ -151,7 +174,7 @@
       (let ((row (l0:row event))
             (col (l0:col event)))
         (ax:if-let ((sur (loop for surface in (surfaces object)
-                               when (inside-p surface row col t)
+                               when (inside-p surface row col)
                                  do (return surface))))
           (progn
             (setf (gethash ptr (pressed object)) sur)
@@ -194,8 +217,8 @@
            (fm::reshape-buffer object
                                (fm::r1 object)
                                (fm::c1 object)
-                               (- row 1)
-                               (- col 2))
+                               row
+                               col)
            (ax:when-let ((pos (gethash ptr mpt)))
              (if (zerop (hash-table-count rpt))
                  (fm::move-buffer object
