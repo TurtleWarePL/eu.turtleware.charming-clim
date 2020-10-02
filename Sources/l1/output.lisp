@@ -104,7 +104,7 @@
 (defmacro iterate-cells ((chr crow ccol wrap)
                          (buf row col str)
                          &body body)
-  (alexandria:with-gensyms (cols rows)
+  (ax:with-gensyms (cols rows)
     `(loop with ,rows = (rows ,buf)
            with ,cols = (cols ,buf)
            with ,crow = ,row

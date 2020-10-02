@@ -42,18 +42,25 @@
            #:pointer-event #:row #:col #:btn #:mods #:state))
 
 (defpackage #:eu.turtleware.charming-clim/l1
-  (:export #:*console* #:*buffer*)
-  (:export #:with-console #:with-buffer #:bbox #:out #:ctl)
-  (:export #:set-cell #:put-cell #:flush-output)
-  (:export #:process-next-event #:process-available-events #:exit)
-  (:export #:console #:handle-event)
-  (:export #:surface #:sink #:offset))
+  (:use #:eu.turtleware.charming-clim/l0)
+  (:export #:with-console #:*console* #:console #:handle-event
+           #:process-next-event #:process-available-events #:exit)
+  (:export #:with-buffer #:*buffer* #:output-buffer #:out #:ctl
+           #:buffer-cursor #:direct-cursor
+           #:set-cell #:put-cell #:flush-output
+           #:bbox #:rows #:cols #:resize-buffer
+           #:with-clipping #:invoke-with-clipping #:inside-p)
+  (:export #:surface #:sink #:offset
+           #:scroll-surface #:move-surface #:reshape-surface))
 
 (defpackage #:eu.turtleware.charming-clim/l2
+  (:use #:eu.turtleware.charming-clim/l0
+        #:eu.turtleware.charming-clim/l1)
   (:export))
 
 (defpackage #:eu.turtleware.charming-clim
   (:use #:common-lisp
         #:eu.turtleware.charming-clim/l0
         #:eu.turtleware.charming-clim/l1
-        #:eu.turtleware.charming-clim/l2))
+        #:eu.turtleware.charming-clim/l2)
+  (:local-nicknames (#:ax #:alexandria)))

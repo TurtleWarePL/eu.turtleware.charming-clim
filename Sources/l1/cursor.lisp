@@ -98,8 +98,8 @@
       (list :row row :col col :fgc fgc :bgc bgc :txt (cursor-text cursor)))))
 
 (defmacro with-modified-pen ((cursor cursor-args) &body body)
-  (alexandria:with-gensyms (old-row old-col old-fgc old-bgc old-txt)
-    (alexandria:once-only (cursor)
+  (ax:with-gensyms (old-row old-col old-fgc old-bgc old-txt)
+    (ax:once-only (cursor)
       `(multiple-value-bind (,old-row ,old-col) (cursor-position ,cursor)
          (multiple-value-bind (,old-fgc ,old-bgc) (cursor-inks ,cursor)
            (let ((,old-txt (cursor-text ,cursor)))

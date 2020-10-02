@@ -1,13 +1,21 @@
 (in-package #:eu.turtleware.charming-clim)
 
+;;; Surface protocol
+
+(defgeneric scroll-surface  (buf rdx cdx))
+(defgeneric reshape-surface (buf r1 c1 r2 c2))
+
+(defgeneric sink (buf))
+(defgeneric offset (buf))
+
 (defclass surface (bbox output-buffer)
   ((sink :initarg :sink :accessor sink :documentation "Flush destination")
    (row0 :initarg :row0 :accessor row0 :documentation "Scroll row offset")
    (col0 :initarg :col0 :accessor col0 :documentation "Scroll col offset"))
   (:default-initargs :row0 0 :col0 0 :sink *buffer*))
 
-(defun offset (surface)
-  (values (row0 surface) (col0 surface)))
+(defmethod offset ((buf surface))
+  (values (row0 buf) (col0 buf)))
 
 (defmethod direct-cursor ((buffer surface) &aux (sink (sink buffer)))
   (buffer-cursor sink))
@@ -85,14 +93,22 @@
                    (>= vcol2 width)))
       (setf (col0 buf) col0))))
 
+(defun move-surface (buf row-dx col-dx)
+  (multiple-value-bind (r1 c1 r2 c2) (bbox buf)
+    (reshape-surface buf
+                     (+ r1 row-dx)
+                     (+ c1 col-dx)
+                     (+ r2 row-dx)
+                     (+ c2 col-dx))))
+
 #+ (or) ;; naive version
-(defun scroll-buffer (buf row-dx col-dx)
+(defmethod scroll-surface ((buf surface) row-dx col-dx)
   (incf (row0 buf) row-dx)
   (incf (col0 buf) col-dx))
 
-(defun scroll-buffer (buf row-dx col-dx)
+(defmethod scroll-surface ((buf surface) row-dx col-dx)
   (flet ((quantity (screen-size buffer-size dx)
-           (if (alexandria:xor (> screen-size buffer-size)
+           (if (ax:xor (> screen-size buffer-size)
                                (minusp dx))
                0
                (- buffer-size screen-size))))
@@ -107,18 +123,9 @@
             (setf (col0 buf)
                   (quantity width (cols buf) col-dx)))))))
 
-(defun move-buffer (buf row-dx col-dx)
-  (incf (r1 buf) row-dx)
-  (incf (r2 buf) row-dx)
-  (incf (c1 buf) col-dx)
-  (incf (c2 buf) col-dx))
-
-(defun reshape-buffer (buf r1 c1 r2 c2)
+(defmethod reshape-surface ((buf surface) r1 c1 r2 c2)
   (setf (r1 buf) r1)
   (setf (c1 buf) c1)
   (setf (r2 buf) r2)
   (setf (c2 buf) c2)
-  (resize-buffer buf
-                 (+ (- r2 r1) 1)
-                 (+ (- c2 c1) 1))
-  (scroll-buffer buf 0 0))
+  (scroll-surface buf 0 0))

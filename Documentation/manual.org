@@ -254,6 +254,9 @@ Currently recognized non-ascii keys are: ~:home~, ~:insert~, ~:delete~,
 ~:end~, ~:page-up~, ~:page-down~, ~:f1~ up to ~:f20~, ~:key-up~, ~:key-down~,
 ~:key-right~, ~:key-left~, ~:escape~ and ~:delete~.
 
+Moreover ~rubout~ and ~backspace~ are returned for ~C-?~ and ~C-h~. Which one
+is send when the key "backspace" is pressed depends on the terminal.
+
 Note, that the window manager or the terminal application may not send some
 keys to the application, for instance Alt+Number may be reserved for switching
 tabs and ~:f1~ may be mapped to open the "Help" menu.
@@ -445,6 +448,7 @@ clipping. Functions specified for all instances of that class are:
 - bbox, rows, cols
 - inside-p
 - invoke-with-clipping
+- resize-buffer
 
 To specify a "current" buffer a macro ~with-buffer~ is specified. Macros
 operating on the current buffer are ~ctl~ and ~out~. Additionally a function
@@ -471,6 +475,7 @@ A scroll offset is added to the coordinate, so if the offset is:
 Surface protocol:
 
 - surface (bbox output-buffer) :: protocol class
+- sink :: surface's sink buffer (the parent output buffer))
 - bbox :: surface dimensions in its sink's coordinates (values r1 c1 r2 c2)
 - offset :: scroll offset (values row col)
 - (:row0 0), (:col0 0), :r1, :c1, :r2, :c2, (:sink *buffer*) :: initargs
@@ -479,9 +484,9 @@ To determine actual size of the surface it is enough to call appropriate
 ~output-buffer~ protocol functions.
 
 Helper functions:
-- (scroll-buffer buf row-dx col-dx) :: scrolls the buffer
-- (move-buffer buf row-dx col-dx) :: moves the buffer in parent's coordinates
-- (reshape-buffer buf r1 c1 r2 c2) :: changes the buffer dimensions
+- (scroll-surface buf rdx cdx)      :: scrolls the surface
+- (move-surface buf rdx cdx)        :: moves the buffer in parent's plane
+- (reshape-surface buf r1 c1 r2 c2) :: changes the surface bbox in parent's plane
 
 *** Console
 

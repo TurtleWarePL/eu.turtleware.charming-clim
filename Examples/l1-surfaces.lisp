@@ -15,6 +15,12 @@
 (defgeneric handle-repaint (object)
   (:method (object) nil))
 
+;;; This is a helper function which does two things: it reshapes the surface
+;;; and resizes the buffer.
+(defun resize-surface (buf r1 c1 r2 c2)
+  (l1:reshape-surface buf r1 c1 r2 c2)
+  (l1:resize-buffer buf (+ (- r2 r1) 1) (+ (- c2 c1) 1)))
+
 (defclass surface-manager (l1:console)
   ((surfaces
     :accessor surfaces)
@@ -69,8 +75,6 @@
            t))))
 
 (defmethod handle-repaint ((object surface-manager))
-  (l1:ctl (:ink #xffffff00 #x00000000)
-          (:clr 1 1 (l0:rows object) (l0:cols object)))
   (mapc (lambda (surface)
           (handle-repaint surface))
         (reverse (surfaces object)))
@@ -125,7 +129,7 @@
   (ax:when-let ((surface (focused object)))
     (l1:handle-event surface event)))
 
-
+;; resizing window should also resize the frame (to limit the surface)
 (defclass window (l1:surface)
   ((title
     :initform (ax:required-argument :title)
@@ -147,6 +151,16 @@
     :initform nil
     :initarg :frame
     :accessor frame)))
+
+;;; This function is responsible for reshaping the window's surface and
+;;; adjusting the underlying frame accordingly.
+(defun resize-window (win r1 c1 r2 c2)
+  (multiple-value-bind (or1 oc1 or2 oc2) (l1:bbox win)
+    (l1:with-buffer ((l1:sink win))
+      (l1:ctl (:clr or1 oc1 or2 oc2))))
+  (resize-surface win r1 c1 r2 c2)
+  (ax:when-let ((frame (frame win)))
+    (resize-surface frame 2 3 (- (l1:rows win) 1) (- (l1:cols win) 2))))
 
 (defmethod initialize-instance :after ((object window) &rest args
                                        &key frame fgc bgc r1 c1 r2 c2)
@@ -212,25 +226,22 @@
        (remhash ptr mpt)
        (remhash ptr rpt))
       (:motion
-       (if (gethash ptr rpt)
-           (fm::reshape-buffer object
-                               (fm::r1 object)
-                               (fm::c1 object)
-                               row
-                               col)
-           (ax:when-let ((pos (gethash ptr mpt)))
-             (if (zerop (hash-table-count rpt))
-                 (fm::move-buffer object
-                                  (- row (car pos))
-                                  (- col (cdr pos)))
-                 ;; Don't move the bottom right corner during resize.
-                 (fm::reshape-buffer object
-                                     row
-                                     col
-                                     (fm::r2 object)
-                                     (fm::c2 object)))
-             (setf (car pos) row
-                   (cdr pos) col)))))))
+       (multiple-value-bind (r1 c1 r2 c2) (l1:bbox object)
+        (if (gethash ptr rpt)
+            (resize-window object r1 c1 row col)
+            (ax:when-let ((pos (gethash ptr mpt)))
+              (if (zerop (hash-table-count rpt))
+                  (let ((rdx (- row (car pos)))
+                        (cdx (- col (cdr pos))))
+                    (resize-window object
+                                   (+ r1 rdx)
+                                   (+ c1 cdx)
+                                   (+ r2 rdx)
+                                   (+ c2 cdx)))
+                  ;; Don't move the bottom right corner during resize.
+                  (resize-window object row col r2 c2))
+              (setf (car pos) row
+                    (cdr pos) col))))))))
 
 
 (defclass peep-frame (l1:surface) ())
@@ -275,6 +286,9 @@
     (loop with console = l1:*console*
           with flush-time = (floor internal-time-units-per-second 60)
           with next-paint = (+ (get-internal-real-time) flush-time)
+            initially
+               (l1:ctl (:ink #xffffff00 #x00000000)
+                       (:clr 1 1 (l0:rows console) (l0:cols console)))
           do (when (>= (get-internal-real-time) next-paint)
                (handle-repaint console)
                (setf next-paint (+ (get-internal-real-time) flush-time)))

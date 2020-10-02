@@ -20,7 +20,7 @@
 
 (defun process-next-event (&optional waitp)
   (finish-output *terminal*)
-  (alexandria:when-let ((event (read-input waitp)))
+  (ax:when-let ((event (read-input waitp)))
     (let ((console *console*))
       (when (typep event 'pointer-event)
         (setf (pointer event) (ptr console)))
