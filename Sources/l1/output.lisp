@@ -131,6 +131,11 @@
   (declare (ignore buffer args))
   #|whoosh|#)
 
+(defmethod flush-output :around ((buffer output-buffer) &rest args)
+  (declare (ignore args))
+  (unless (eq (mode buffer) :dir)
+    (call-next-method)))
+
 (defun get-cell (buf row col)
   (let ((data (data buf))
         (i0 (1- row))
