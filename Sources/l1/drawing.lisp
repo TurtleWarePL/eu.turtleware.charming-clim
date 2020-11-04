@@ -59,7 +59,7 @@
    (bgc :initarg :bgc :accessor bgc :documentation "Background color")
    (txt :initarg :txt :accessor txt :documentation "Text style"))
   (:default-initargs :chr #\space :fgc #x222222ff :bgc #xddddddff
-                     :txt *default-text-style*))
+                     :txt (copy-list *default-text-style*)))
 
 
 (defclass cell (drawing-style-mixin)
@@ -67,7 +67,7 @@
   (:default-initargs :chr #\space
                      :fgc (fgc (bcur *buffer*))
                      :bgc (bgc (bcur *buffer*))
-                     :txt (txt (bcur *buffer*))
+                     :txt (copy-list (txt (bcur *buffer*)))
                      :dirty-p t))
 
 ;;; CLIM has a fancy abstraction with uniform compositums, so it is possible

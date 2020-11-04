@@ -110,15 +110,22 @@
            with ,crow = ,row
            with ,ccol = ,col
            with ,wrap = nil
+           ;; We may need to wrap the first line.
+             initially
+                (when (> ,ccol ,cols)
+                  (multiple-value-bind (drow fcol)
+                      (truncate ,ccol ,cols)
+                    (incf ,crow drow)
+                    (setf ,ccol fcol)
+                    (setf ,wrap t)))
+           until (> ,crow ,rows)
            for ,chr across ,str
            do (progn ,@body)
               (setf ,wrap nil)
            if (eql ,chr #\newline)
              do (setf ,ccol 1
                       ,wrap t)
-                (if (= ,crow ,rows)
-                    (setf ,crow 1)
-                    (incf ,crow 1))
+                (incf ,crow 1)
            else
              do (if (= ,ccol ,cols)
                     (setf ,ccol 1
@@ -164,30 +171,38 @@
 ;;; buffer, then put-cell could be used, however then flush-output may not
 ;;; recognize dirty regions and the force flag may be necessary.
 (defmethod set-cell ((buf output-buffer) str
-                     &rest cursor-args)
+                     &rest cursor-args
+                     &key row col &allow-other-keys)
+  (remf cursor-args :row)
+  (remf cursor-args :col)
   (let* ((bcur (bcur buf))
          (mode (mode buf)))
     (with-modified-pen (bcur cursor-args)
-      (let ((row (row bcur))
-            (col (col bcur))
+      (let ((row (or row (row bcur)))
+            (col (or col (col bcur)))
             (fgc (fgc bcur))
             (bgc (bgc bcur))
             (txt (txt bcur)))
-        (iterate-cells (chr crow ccol wrap-p)
-            (buf row col (string str))
-          (when (inside-p buf crow ccol)
-            (multiple-value-bind (cell clean)
-                (write-cell (get-cell buf crow ccol)
-                            chr fgc bgc txt
-                            :only-check (eq mode :dir))
-              (setf (dirty-p cell)
-                    (not (or (eq mode :wrt) clean))))))
+        (multiple-value-bind (crow ccol)
+            (iterate-cells (chr crow ccol wrap-p)
+                (buf row col (string str))
+              (when (inside-p buf crow ccol)
+                (multiple-value-bind (cell clean)
+                    (write-cell (get-cell buf crow ccol)
+                                chr fgc bgc txt
+                                :only-check (eq mode :dir))
+                  (setf (dirty-p cell)
+                        (not (or (eq mode :wrt) clean))))))
+          (change-cursor-position bcur crow ccol))
         (when (member mode '(:dir :wrt))
-          (put-cell buf str :row row :col col
-                            :fgc fgc :bgc bgc
-                            :txt txt))))))
+          (multiple-value-bind (drow fcol)
+              (truncate col (cols buf))
+            (put-cell buf str :row (+ row drow) :col fcol
+                              :fgc fgc :bgc bgc
+                              :txt (copy-list txt))))))))
 
 (defmethod put-cell ((buffer output-buffer) str &rest cursor-args)
+  (declare (ignore buffer str cursor-args))
   (warn "put-cell: default method does nothing!"))
 
 (defmethod inside-p ((buffer output-buffer) row col)
