@@ -52,9 +52,10 @@
        ,@operations)))
 
 (defun clear-rectangle (r1 c1 r2 c2)
-  (loop with str = (make-string (1+ (- c2 c1)) :initial-element #\space)
-        for r from r1 upto r2
-        do (out (:row r :col c1) str)))
+  (when (and (>= r2 r1) (>= c2 c1))
+    (loop with str = (make-string (1+ (- c2 c1)) :initial-element #\space)
+          for r from r1 upto r2
+          do (out (:row r :col c1) str))))
 
 
 (defclass bbox ()
@@ -91,6 +92,8 @@
     (setf (bcur buf) (make-instance 'cursor :fgc fgc :bgc bgc))))
 
 (defun resize-buffer (buf rows cols)
+  (alexandria:maxf rows 0)
+  (alexandria:maxf cols 0)
   (setf (rows buf) rows)
   (setf (cols buf) cols)
   (let ((clip (clip buf)))
@@ -99,7 +102,7 @@
   (adjust-array (data buf) (list rows cols) :initial-element nil))
 
 (defmethod bbox ((o output-buffer))
-  (values 1 1 (rows o) (cols o)))
+  (values 1 1 (+ (rows o) 1) (+ (cols o) 1)))
 
 (defmacro iterate-cells ((chr crow ccol wrap)
                          (buf row col str)
@@ -112,6 +115,8 @@
            with ,wrap = nil
            ;; We may need to wrap the first line.
              initially
+                (when (zerop ,cols)
+                  (return))
                 (when (> ,ccol ,cols)
                   (multiple-value-bind (drow fcol)
                       (truncate ,ccol ,cols)
@@ -195,11 +200,13 @@
                         (not (or (eq mode :wrt) clean))))))
           (change-cursor-position bcur crow ccol))
         (when (member mode '(:dir :wrt))
-          (multiple-value-bind (drow fcol)
-              (truncate col (cols buf))
-            (put-cell buf str :row (+ row drow) :col fcol
-                              :fgc fgc :bgc bgc
-                              :txt (copy-list txt))))))))
+          (let ((cols (cols buf)))
+            (unless (zerop cols)
+              (multiple-value-bind (drow fcol)
+                  (truncate col (cols buf))
+                (put-cell buf str :row (+ row drow) :col fcol
+                                  :fgc fgc :bgc bgc
+                                  :txt (copy-list txt))))))))))
 
 (defmethod put-cell ((buffer output-buffer) str &rest cursor-args)
   (declare (ignore buffer str cursor-args))
