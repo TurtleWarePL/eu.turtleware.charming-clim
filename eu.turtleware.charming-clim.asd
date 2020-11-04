@@ -52,7 +52,9 @@
 
 (defsystem "eu.turtleware.charming-clim/examples"
   :license "BSD-2-Clause"
-  :depends-on ("eu.turtleware.charming-clim")
+  :depends-on ("eu.turtleware.charming-clim"
+               "alexandria"
+               "flexichain")
   :pathname "Examples"
   :components ((:file "examples")
                (:file "l0-example")
