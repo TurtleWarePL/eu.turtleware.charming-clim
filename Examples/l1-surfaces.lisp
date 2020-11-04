@@ -53,8 +53,8 @@
                              :sink object
                              :frame 'text-frame
                              :fgc +black+
-                             :bgc +grey2+
-                             :r1 13 :c1 10 :r2 21 :c2 40))))
+                             :bgc +white+
+                             :r1 12 :c1 20 :r2 21 :c2 60))))
 
 ;;; A helper function.
 (defun inside-p (surface row col)
@@ -155,6 +155,8 @@
 ;;; This function is responsible for reshaping the window's surface and
 ;;; adjusting the underlying frame accordingly.
 (defun resize-window (win r1 c1 r2 c2)
+  (alexandria:maxf r2 (+ r1 1))
+  (alexandria:maxf c2 (+ c1 3))
   (multiple-value-bind (or1 oc1 or2 oc2) (l1:bbox win)
     (l1:with-buffer ((l1:sink win))
       (l1:ctl (:clr or1 oc1 or2 oc2))))
@@ -252,33 +254,92 @@
 
 
 (defclass text-frame (l1:surface)
-  ((text-buffer
-    :initform "Hello world"
-    :accessor text-buffer)))
+  ((text-cursor
+    :initform (make-instance 'text-cursor)
+    :accessor text-cursor)))
 
-(defmethod handle-repaint ((object text-frame)
-                           &aux (text (text-buffer object)))
+;;; This is a showoff with inserting a separate cursor between letters. For
+;;; instance emacs simply inverts the color of the letter immedietely after
+;;; the cursor, that makes the text-bounding rectangle constant for the same
+;;; text (irregardless of the cursor being visible and present).
+(defmethod handle-repaint ((object text-frame))
   (l1:with-buffer (object)
     (l1:ctl (:clr 1 1 (l0:rows object) (l0:cols object)))
-    (l1:out (:row 1) text)
-    ;; Our "surface manager" is only capable of "focusing" top-level surfaces,
-    ;; so we check whether the sink (we assume that it is a top-level window)
-    ;; is focused and only then the prompt is printed.
-    (when (eq (l1:sink object) (focused l1:*console*))
-      ;; out should accept now row/col, in that case buffer-cursor position
-      ;; should be left "at the end" of the last output.
-      (multiple-value-bind (mod rem)
-          (truncate (length text) (l0:cols object))
-        (l1:out (:row (+ mod 1) :col (+ rem 1) :txt '(:blink t)) "_")))))
+    (fm::change-cursor-position (l1:buffer-cursor object) 1 1)
+    (loop with cursor = (text-cursor object)
+          with chain = (flexichain:chain cursor)
+          with length = (flexichain:nb-elements chain)
+          with cursor-pos = (flexichain:cursor-pos cursor)
+          with active-txt = (if (eq (l1:sink object)
+                                    (focused l1:*console*))
+                                '(:blink t)
+                                nil)
+          for pos from 0 below length
+          for elt = (flexichain:element* chain pos)
+          when (and active-txt (= pos cursor-pos))
+            do (l1:out (:fgc (fm::fgc cursor)
+                        :bgc (fm::bgc cursor)
+                        :txt (fm::fuze-text-style active-txt
+                                                  (fm::txt cursor)))
+                       "|")
+          do (l1:out (:fgc (fm::fgc elt)
+                      :bgc (fm::bgc elt)
+                      :txt (fm::txt elt))
+                     (fm::chr elt))
+          finally
+             (when (and active-txt (= length cursor-pos))
+               (l1:out (:fgc (fm::fgc cursor)
+                        :bgc (fm::bgc cursor)
+                        :txt (fm::fuze-text-style active-txt
+                                                  (fm::txt cursor)))
+                       "|")))))
 
 (defmethod l1:handle-event ((object text-frame) (event l0:keyboard-event))
-  (setf (text-buffer object) (format nil "~a" event)))
+  (modify-cursor (text-cursor object) event))
 
-;; (defclass text-cursor (fm::cursor) ())
+
+;;; Implementation of the text cursor based on flexichains
 
-;; (defmethod l1:handle-event ((client text-cursor) (event l0:keyboard-event))
-;;   (fm::key-case event
-;;     (:backsp (decf ))))
+(defclass text-cursor (fm::cursor flexichain:right-sticky-flexicursor)
+  ()
+  (:default-initargs :chain (make-instance 'flexichain:standard-cursorchain)))
+
+(defmethod modify-cursor (client event)
+  (ax:when-let ((ch (l0:kch event)))
+    (when (graphic-char-p ch)
+      (flexichain:insert client
+                         (make-instance 'fm::cell :chr ch
+                                                  :fgc (fm::fgc client)
+                                                  :bgc (fm::bgc client)
+                                                  :txt
+                                                  (copy-list (fm::txt client))))))
+  (handler-case
+      (fm::key-case event
+        (:backspace (flexichain:delete< client))
+        (:rubout    (flexichain:delete< client))
+        (:delete    (flexichain:delete> client))
+        (:key-left  (flexichain:move<   client))
+        (:key-right (flexichain:move>   client))
+        ((#\B :c)   (if (eq (getf (fm::txt client) :intensity) :bold)
+                        (setf (getf (fm::txt client) :intensity) :normal)
+                        (setf (getf (fm::txt client) :intensity) :bold)))
+        ((#\I :c)   (setf (getf (fm::txt client) :italicized)
+                          (not (getf (fm::txt client) :italicized))))
+        ((#\U :c)   (setf (getf (fm::txt client) :underline)
+                          (case (getf (fm::txt client) :underline)
+                            (:none :single)
+                            (:single :double)
+                            (:double :none)))))
+    ;; Ignore flexichain errors related to operations beyond the chain. We
+    ;; simply ignore these operations.
+    ((or flexichain:flexi-position-error
+         flexichain:at-end-error
+         flexichain:at-beginning-error)
+      ()))
+  (loop with chain = (flexichain:chain client)
+        with length = (flexichain:nb-elements chain)
+        for pos from 0 below length
+        collect (flexichain:element* chain pos)))
 
 
 (defun start-surface-manager ()
